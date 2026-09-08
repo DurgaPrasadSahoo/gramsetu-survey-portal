@@ -24,8 +24,8 @@ export default function Dashboard() {
           <h1>Welcome, {user?.name?.split(' ')[0]}</h1>
           <p className="page-subtitle">
             {user?.role === 'admin'
-              ? 'Overview of all household surveys collected across the portal.'
-              : 'Overview of the household survey drive. Add new entries from the field.'}
+              ? 'Overview of all household surveys collected across Bhubaneswar, Odisha.'
+              : 'Overview of the Bhubaneswar household survey drive. Add new entries from the field.'}
           </p>
         </div>
         <Link to="/surveys/new" className="btn btn-primary">+ New Survey Entry</Link>
@@ -39,8 +39,10 @@ export default function Dashboard() {
             <StatCard label="Total Households Surveyed" value={stats.total} accent="blue" />
             {user.role === 'agent' && <StatCard label="Surveyed by You" value={stats.myCount} accent="green" />}
             <StatCard
-              label="BPL Households"
-              value={stats.byRationCard.find((r) => r.ration_card_type === 'BPL')?.c || 0}
+              label="Subsidised Ration Card Holders (AAY/PHH/SFSS)"
+              value={stats.byRationCard
+                .filter((r) => ['AAY', 'PHH', 'SFSS'].includes(r.ration_card_type))
+                .reduce((sum, r) => sum + r.c, 0)}
               accent="orange"
             />
             <StatCard

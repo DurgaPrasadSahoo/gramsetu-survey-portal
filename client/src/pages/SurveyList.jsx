@@ -73,7 +73,7 @@ export default function SurveyList() {
         />
         <select value={category} onChange={(e) => { setCategory(e.target.value); }}>
           <option value="">All Categories</option>
-          {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.value}</option>)}
         </select>
         <select value={rationCardType} onChange={(e) => { setRationCardType(e.target.value); }}>
           <option value="">All Ration Card Types</option>

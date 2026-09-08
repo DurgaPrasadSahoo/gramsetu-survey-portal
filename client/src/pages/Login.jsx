@@ -30,7 +30,7 @@ export default function Login() {
   };
 
   return (
-    <AuthShell title="Portal Login" subtitle="Access the Household Socio-Economic Survey Portal">
+    <AuthShell title="Portal Login" subtitle="Access the Bhubaneswar Household Survey Portal">
       <form className="auth-form" onSubmit={handleSubmit}>
         {error && <div className="alert alert-error">{error}</div>}
         <label className="form-field">

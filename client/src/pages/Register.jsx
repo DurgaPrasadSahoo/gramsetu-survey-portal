@@ -33,7 +33,7 @@ export default function Register() {
   };
 
   return (
-    <AuthShell title="Field Agent Registration" subtitle="Create an account to start conducting household surveys">
+    <AuthShell title="Field Agent Registration" subtitle="Create an account to start conducting household surveys in Bhubaneswar">
       <form className="auth-form" onSubmit={handleSubmit}>
         {error && <div className="alert alert-error">{error}</div>}
         <label className="form-field">

@@ -12,6 +12,7 @@ import SurveyDetails from './pages/SurveyDetails';
 import SurveyEdit from './pages/SurveyEdit';
 import Agents from './pages/Agents';
 import Profile from './pages/Profile';
+import SchemesInfo from './pages/SchemesInfo';
 import NotFound from './pages/NotFound';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/surveys" element={<SurveyList />} />
           <Route path="/surveys/new" element={<SurveyAdd />} />
           <Route path="/surveys/:id" element={<SurveyDetails />} />
+          <Route path="/schemes" element={<SchemesInfo />} />
           <Route path="/profile" element={<Profile />} />
 
           <Route element={<ProtectedRoute roles={['admin']} />}>

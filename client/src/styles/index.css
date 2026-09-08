@@ -251,6 +251,18 @@ h1, h2, h3 {
 .breakdown-list li:last-child { border-bottom: none; }
 .breakdown-count { font-weight: 700; color: var(--navy); }
 
+.scheme-list { list-style: none; padding: 0; margin: 0; }
+.scheme-list li {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.scheme-list li:last-child { border-bottom: none; }
+.scheme-name { font-weight: 700; font-size: 0.9rem; color: var(--navy-dark); }
+.scheme-desc { font-size: 0.83rem; color: var(--text-muted); }
+
 /* ---------- Filter bar ---------- */
 .filter-bar {
   display: flex;
@@ -305,9 +317,12 @@ h1, h2, h3 {
   background: #e2e8f0;
   color: #334155;
 }
-.badge-bpl { background: #fde2e2; color: #9a2b2b; }
-.badge-aay { background: #fde9d0; color: #8a4a06; }
+.badge-aay { background: #fde2e2; color: #9a2b2b; }
+.badge-phh { background: #fde9d0; color: #8a4a06; }
+.badge-sfss { background: #e0e7ff; color: #3730a3; }
 .badge-apl { background: #dcfce7; color: #166534; }
+.badge-none { background: #e2e8f0; color: #475569; }
+.scheme-group-title { font-size: 0.88rem; margin: 0.9rem 0 0.5rem; color: var(--text); }
 .badge-active { background: #dcfce7; color: #166534; }
 .badge-inactive { background: #fde2e2; color: #9a2b2b; }
 .badge-admin { background: var(--saffron); color: #3a2200; }

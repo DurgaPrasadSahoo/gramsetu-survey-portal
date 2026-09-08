@@ -1,10 +1,12 @@
-# GramSetu — Household Socio-Economic Survey Portal
+# GramSetu — Household Survey Portal (Bhubaneswar, Odisha)
 
 A full-stack, mobile-responsive e-governance style portal for conducting a
-household socio-economic survey, modeled on India's SECC / BPL survey and
-Public Distribution System (ration card) forms. Field agents visit
+household socio-economic survey of Bhubaneswar, Odisha. Field agents visit
 households and record details (assets owned, income, ration card type,
-category, etc.); administrators review, correct, and manage the data.
+category, government schemes availed, etc.); administrators review, correct,
+and manage the data. Location fields, ration card categories, and government
+scheme lists are tailored to Odisha (Khordha district / Bhubaneswar Municipal
+Corporation area).
 
 ## Tech stack
 
@@ -74,17 +76,39 @@ a government back-office portal).
 - **New Survey Entry** — the full household survey form
 - **Household Record Details** (read-only view)
 - **Edit Household Record** (admin only)
+- **Government Schemes** — a reference list of Central and Odisha State schemes
 - **Field Agents** (admin only) — see each agent's submission count, activate/deactivate
 - **My Profile**
 
 ## Survey fields captured
 
-Personal details, Aadhaar/mobile/email, full address (state/district/block/
-village/pincode), social category, religion, ration card type (APL/BPL/AAY),
-house type & ownership, family size, monthly income, occupation, land owned,
-government scheme availed, and household assets: two-wheeler, four-wheeler,
-refrigerator, TV, AC, LPG gas connection, washing machine, computer/laptop,
-smartphone, water pump, and bank account (with bank name/account number).
+Personal details, Aadhaar/mobile/email, full address (state/district defaulting
+to Odisha/Khordha, block/tehsil/BMC ward, city-town-village with Bhubaneswar
+locality suggestions, pincode), social category (General/SEBC/SC/ST/EWS —
+Odisha's official terminology), religion, ration card type (AAY/PHH/SFSS/APL —
+matching Odisha's actual PDS categories), house type & ownership, family size,
+monthly income, occupation (including handloom/handicraft artisan and fishing,
+common in Odisha), land owned, government schemes availed (multi-select, see
+below), and household assets: two-wheeler, four-wheeler, refrigerator, TV, AC,
+LPG gas connection, washing machine, computer/laptop, smartphone, water pump,
+and bank account (with bank name/account number).
+
+## Government schemes tracked
+
+The **Government Schemes** page and the survey form's "Government Schemes
+Availed" checklist cover:
+
+- **Central schemes:** PM Awas Yojana, PM Kisan Samman Nidhi, Ayushman Bharat
+  (PM-JAY), MGNREGA, PM Ujjwala Yojana, PM Jan Dhan Yojana, Atal Pension Yojana,
+  PM Jeevan Jyoti/Suraksha Bima Yojana, PM Fasal Bima Yojana, National Social
+  Assistance Programme, Swachh Bharat Mission.
+- **Odisha state schemes:** KALIA Yojana, Biju Swasthya Kalyan Yojana (BSKY),
+  Madhu Babu Pension Yojana (MBPY), Mission Shakti, Biju Pucca Ghar Yojana, Ama
+  Gaon Ama Bikash, Biju Gram Jyoti Yojana, Odisha Millet Mission, Gopabandhu
+  Gramin Yojana.
+
+Edit `client/src/constants/surveyOptions.js` (`CENTRAL_SCHEMES` /
+`ODISHA_SCHEMES`) to add or update schemes.
 
 ## Notes on the database
 

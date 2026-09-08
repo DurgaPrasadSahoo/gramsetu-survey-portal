@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import {
-  STATES, CATEGORIES, RELIGIONS, RATION_CARD_TYPES, HOUSE_TYPES,
-  HOUSE_OWNERSHIP, OCCUPATIONS, GOVT_SCHEMES, ASSET_FIELDS,
+  STATES, ODISHA_DISTRICTS, BHUBANESWAR_LOCALITIES, CATEGORIES, RELIGIONS, RATION_CARD_TYPES,
+  HOUSE_TYPES, HOUSE_OWNERSHIP, OCCUPATIONS, ASSET_FIELDS, CENTRAL_SCHEMES, ODISHA_SCHEMES,
 } from '../constants/surveyOptions';
 
 export const EMPTY_SURVEY = {
   full_name: '', guardian_name: '', gender: '', dob: '', aadhaar_number: '',
-  mobile_number: '', email: '', state: '', district: '', block: '', village_town: '',
+  mobile_number: '', email: '', state: 'Odisha', district: 'Khordha', block: '', village_town: '',
   address: '', pincode: '', category: '', religion: '', ration_card_type: '',
   house_type: '', house_ownership: '', family_members_count: '', monthly_income: '',
   occupation: '', land_owned_acres: '', bank_name: '', bank_account_number: '',
@@ -37,6 +37,17 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
   const handleChange = (e) => {
     const { name, type, value, checked } = e.target;
     update(name, type === 'checkbox' ? checked : value);
+  };
+
+  const selectedSchemes = values.govt_scheme_availed
+    ? values.govt_scheme_availed.split(', ').filter(Boolean)
+    : [];
+
+  const toggleScheme = (label) => {
+    const next = selectedSchemes.includes(label)
+      ? selectedSchemes.filter((s) => s !== label)
+      : [...selectedSchemes, label];
+    update('govt_scheme_availed', next.join(', '));
   };
 
   const handleSubmit = (e) => {
@@ -90,19 +101,25 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
               </select>
             </Field>
             <Field label="District" error={errors.district}>
-              <input name="district" value={values.district} onChange={handleChange} />
+              <input name="district" value={values.district} onChange={handleChange} list="odisha-districts" placeholder="e.g. Khordha" />
+              <datalist id="odisha-districts">
+                {ODISHA_DISTRICTS.map((d) => <option key={d} value={d} />)}
+              </datalist>
             </Field>
-            <Field label="Block / Mandal / Tehsil" error={errors.block}>
-              <input name="block" value={values.block} onChange={handleChange} />
+            <Field label="Block / Tehsil / Ward No. (BMC area)" error={errors.block}>
+              <input name="block" value={values.block} onChange={handleChange} placeholder="e.g. Bhubaneswar Block or Ward 12" />
             </Field>
-            <Field label="Village / Town" error={errors.village_town}>
-              <input name="village_town" value={values.village_town} onChange={handleChange} />
+            <Field label="City / Town / Village" error={errors.village_town}>
+              <input name="village_town" value={values.village_town} onChange={handleChange} list="bhubaneswar-localities" placeholder="e.g. Bhubaneswar - Patia" />
+              <datalist id="bhubaneswar-localities">
+                {BHUBANESWAR_LOCALITIES.map((l) => <option key={l} value={l} />)}
+              </datalist>
             </Field>
             <Field label="Pincode" error={errors.pincode}>
-              <input name="pincode" value={values.pincode} onChange={handleChange} maxLength={6} />
+              <input name="pincode" value={values.pincode} onChange={handleChange} maxLength={6} placeholder="e.g. 751001" />
             </Field>
             <Field label="Full Address" error={errors.address}>
-              <textarea name="address" value={values.address} onChange={handleChange} rows={2} />
+              <textarea name="address" value={values.address} onChange={handleChange} rows={2} placeholder="House no., street, locality/colony" />
             </Field>
           </div>
         </section>
@@ -113,7 +130,7 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
             <Field label="Category" error={errors.category}>
               <select name="category" value={values.category} onChange={handleChange}>
                 <option value="">Select</option>
-                {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+                {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </Field>
             <Field label="Religion" error={errors.religion}>
@@ -168,7 +185,7 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
               </label>
             ))}
           </div>
-          {values.has_bank_account && (
+          {!!values.has_bank_account && (
             <div className="form-grid" style={{ marginTop: '0.75rem' }}>
               <Field label="Bank Name" error={errors.bank_name}>
                 <input name="bank_name" value={values.bank_name} onChange={handleChange} />
@@ -181,14 +198,44 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
         </section>
 
         <section className="form-section">
-          <h3>Government Scheme &amp; Remarks</h3>
+          <h3>Government Schemes Availed</h3>
+          <p className="muted" style={{ marginTop: '-0.4rem', marginBottom: '0.75rem' }}>
+            Select every scheme this household currently benefits from. See the{' '}
+            <a href="/schemes" target="_blank" rel="noreferrer">Government Schemes</a> page for details on each.
+          </p>
+
+          <h4 className="scheme-group-title">Central Government Schemes</h4>
+          <div className="asset-grid">
+            {CENTRAL_SCHEMES.map((s) => (
+              <label key={s.key} className="checkbox-tile" title={s.description}>
+                <input
+                  type="checkbox"
+                  checked={selectedSchemes.includes(s.label)}
+                  onChange={() => toggleScheme(s.label)}
+                />
+                <span>{s.label}</span>
+              </label>
+            ))}
+          </div>
+
+          <h4 className="scheme-group-title">Odisha State Government Schemes</h4>
+          <div className="asset-grid">
+            {ODISHA_SCHEMES.map((s) => (
+              <label key={s.key} className="checkbox-tile" title={s.description}>
+                <input
+                  type="checkbox"
+                  checked={selectedSchemes.includes(s.label)}
+                  onChange={() => toggleScheme(s.label)}
+                />
+                <span>{s.label}</span>
+              </label>
+            ))}
+          </div>
+        </section>
+
+        <section className="form-section">
+          <h3>Remarks</h3>
           <div className="form-grid">
-            <Field label="Government Scheme Availed" error={errors.govt_scheme_availed}>
-              <select name="govt_scheme_availed" value={values.govt_scheme_availed} onChange={handleChange}>
-                <option value="">Select</option>
-                {GOVT_SCHEMES.map((g) => <option key={g}>{g}</option>)}
-              </select>
-            </Field>
             <Field label="Remarks / Notes" error={errors.remarks}>
               <textarea name="remarks" value={values.remarks} onChange={handleChange} rows={2} />
             </Field>

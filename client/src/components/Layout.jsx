@@ -6,6 +6,7 @@ const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', icon: '🏠', roles: ['admin', 'agent'] },
   { to: '/surveys', label: 'Household Records', icon: '📋', roles: ['admin', 'agent'] },
   { to: '/surveys/new', label: 'New Survey Entry', icon: '📝', roles: ['admin', 'agent'] },
+  { to: '/schemes', label: 'Govt Schemes', icon: '📜', roles: ['admin', 'agent'] },
   { to: '/agents', label: 'Field Agents', icon: '🧑‍💼', roles: ['admin'] },
   { to: '/profile', label: 'My Profile', icon: '👤', roles: ['admin', 'agent'] },
 ];
@@ -32,7 +33,7 @@ export default function Layout() {
           <span className="brand-emblem">🇮🇳</span>
           <div>
             <div className="brand-title">GramSetu</div>
-            <div className="brand-subtitle">Household Socio-Economic Survey Portal</div>
+            <div className="brand-subtitle">Household Survey Portal — Bhubaneswar, Odisha</div>
           </div>
         </div>
         <div className="topbar-user">
@@ -65,7 +66,7 @@ export default function Layout() {
       </div>
 
       <footer className="app-footer">
-        GramSetu Survey Portal — a demonstration e-governance household survey system.
+        GramSetu Survey Portal — a demonstration e-governance household survey system for Bhubaneswar, Odisha.
       </footer>
     </div>
   );

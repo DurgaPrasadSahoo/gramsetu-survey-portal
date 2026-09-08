@@ -5,7 +5,7 @@ export default function AuthShell({ title, subtitle, children }) {
         <span className="brand-emblem">🇮🇳</span>
         <div>
           <div className="brand-title">GramSetu</div>
-          <div className="brand-subtitle">Household Socio-Economic Survey Portal</div>
+          <div className="brand-subtitle">Household Survey Portal — Bhubaneswar, Odisha</div>
         </div>
       </div>
       <div className="auth-card">
@@ -13,7 +13,7 @@ export default function AuthShell({ title, subtitle, children }) {
         {subtitle && <p className="auth-subtitle">{subtitle}</p>}
         {children}
       </div>
-      <p className="auth-page-footer">Government of Demo State &middot; Department of Rural Development</p>
+      <p className="auth-page-footer">Government of Odisha &middot; Bhubaneswar Municipal Corporation (Demo Portal)</p>
     </div>
   );
 }
