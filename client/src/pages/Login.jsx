@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import AuthShell from '../components/AuthShell';
+import PasswordField from '../components/PasswordField';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -37,23 +38,20 @@ export default function Login() {
           <span className="form-label">Email Address</span>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
         </label>
-        <label className="form-field">
-          <span className="form-label">Password</span>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </label>
+        <PasswordField label="Password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
         <div className="auth-links">
           <Link to="/forgot-password">Forgot password?</Link>
         </div>
         <button className="btn btn-primary btn-block" type="submit" disabled={loading}>
           {loading ? 'Signing in…' : 'Log In'}
         </button>
-        <p className="auth-footer-text">
-          New field agent? <Link to="/register">Register here</Link>
-        </p>
         <div className="demo-hint">
           <strong>Demo credentials</strong>
+          <div>Developer: developer@gramsetu.gov.in / Developer@123</div>
           <div>Admin: admin@gramsetu.gov.in / Admin@123</div>
-          <div>Agent: agent@gramsetu.gov.in / Agent@123</div>
+          <div>Head of District: district.head@gramsetu.gov.in / District@123</div>
+          <div>Head of Panchayat: panchayat.head@gramsetu.gov.in / Panchayat@123</div>
+          <div>Field Agent: agent@gramsetu.gov.in / Agent@123</div>
         </div>
       </form>
     </AuthShell>

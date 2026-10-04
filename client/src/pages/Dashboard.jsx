@@ -6,7 +6,8 @@ import StatCard from '../components/StatCard';
 import { ASSET_FIELDS } from '../constants/surveyOptions';
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, isAdmin, isDeveloper } = useAuth();
+  const isTopLevel = isAdmin || isDeveloper;
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
 
@@ -23,9 +24,9 @@ export default function Dashboard() {
         <div>
           <h1>Welcome, {user?.name?.split(' ')[0]}</h1>
           <p className="page-subtitle">
-            {user?.role === 'admin'
+            {isTopLevel
               ? 'Overview of all household surveys collected across Bhubaneswar, Odisha.'
-              : 'Overview of the Bhubaneswar household survey drive. Add new entries from the field.'}
+              : 'Overview of the household surveys visible to you and your team. Add new entries from the field.'}
           </p>
         </div>
         <Link to="/surveys/new" className="btn btn-primary">+ New Survey Entry</Link>
@@ -36,8 +37,8 @@ export default function Dashboard() {
       {stats && (
         <>
           <div className="stat-grid">
-            <StatCard label="Total Households Surveyed" value={stats.total} accent="blue" />
-            {user.role === 'agent' && <StatCard label="Surveyed by You" value={stats.myCount} accent="green" />}
+            <StatCard label={isTopLevel ? 'Total Households Surveyed' : 'Households Surveyed by Your Team'} value={stats.total} accent="blue" />
+            {!isTopLevel && <StatCard label="Surveyed by You" value={stats.myCount} accent="green" />}
             <StatCard
               label="Subsidised Ration Card Holders (AAY/PHH/SFSS)"
               value={stats.byRationCard

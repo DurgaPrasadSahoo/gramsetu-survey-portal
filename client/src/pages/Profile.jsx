@@ -1,4 +1,5 @@
 import { useAuth } from '../context/AuthContext';
+import { ROLE_BADGE_CLASS, roleLabel } from '../constants/roles';
 
 export default function Profile() {
   const { user } = useAuth();
@@ -25,8 +26,8 @@ export default function Profile() {
           </div>
           <div className="profile-row">
             <span className="profile-label">Role</span>
-            <span className={`badge ${user?.role === 'admin' ? 'badge-admin' : 'badge-agent'}`}>
-              {user?.role === 'admin' ? 'Administrator' : 'Field Agent'}
+            <span className={`badge ${ROLE_BADGE_CLASS[user?.role] || ''}`}>
+              {roleLabel(user?.role)}
             </span>
           </div>
           <div className="profile-row">

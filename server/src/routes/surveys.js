@@ -1,9 +1,23 @@
 const express = require('express');
 const db = require('../db/connection');
 const { authenticate, requireRole } = require('../middleware/auth');
+const { getVisibleUserIds } = require('../utils/hierarchy');
 
 const router = express.Router();
 router.use(authenticate);
+
+// Appends a `created_by IN (...)` clause scoping results to what `user` may see,
+// per the reporting hierarchy. Returns null when there is no restriction (admin/developer).
+function addVisibilityClause(clauses, params, user) {
+  const visibleIds = getVisibleUserIds(user);
+  if (!visibleIds) return null;
+  const placeholders = visibleIds.map((id, i) => {
+    params[`visible${i}`] = id;
+    return `@visible${i}`;
+  });
+  clauses.push(`created_by IN (${placeholders.join(', ')})`);
+  return visibleIds;
+}
 
 const BOOL_FIELDS = [
   'has_two_wheeler',
@@ -75,7 +89,7 @@ function validate(data) {
   return errors;
 }
 
-// List + search + filter + pagination. Both agents and admins can view the full register.
+// List + search + filter + pagination. Scoped to what the requester's hierarchy allows.
 router.get('/', (req, res) => {
   const { search = '', category, rationCardType, district, page = 1, pageSize = 10 } = req.query;
 
@@ -99,6 +113,8 @@ router.get('/', (req, res) => {
     params.district = district;
   }
 
+  addVisibilityClause(clauses, params, req.user);
+
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const total = db.prepare(`SELECT COUNT(*) AS count FROM surveys ${where}`).get(params).count;
 
@@ -114,13 +130,20 @@ router.get('/', (req, res) => {
 });
 
 router.get('/stats/summary', (req, res) => {
-  const total = db.prepare('SELECT COUNT(*) AS c FROM surveys').get().c;
-  const byCategory = db.prepare('SELECT category, COUNT(*) AS c FROM surveys GROUP BY category').all();
-  const byRationCard = db.prepare('SELECT ration_card_type, COUNT(*) AS c FROM surveys GROUP BY ration_card_type').all();
+  const clauses = [];
+  const params = {};
+  addVisibilityClause(clauses, params, req.user);
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM surveys ${where}`).get(params).c;
+  const byCategory = db.prepare(`SELECT category, COUNT(*) AS c FROM surveys ${where} GROUP BY category`).all(params);
+  const byRationCard = db
+    .prepare(`SELECT ration_card_type, COUNT(*) AS c FROM surveys ${where} GROUP BY ration_card_type`)
+    .all(params);
   const assetCols = BOOL_FIELDS.map((f) => `SUM(${f}) AS ${f}`).join(', ');
-  const assetOwnership = db.prepare(`SELECT ${assetCols} FROM surveys`).get();
+  const assetOwnership = db.prepare(`SELECT ${assetCols} FROM surveys ${where}`).get(params);
   const myCount =
-    req.user.role === 'agent'
+    req.user.role !== 'admin' && req.user.role !== 'developer'
       ? db.prepare('SELECT COUNT(*) AS c FROM surveys WHERE created_by = ?').get(req.user.id).c
       : null;
 
@@ -130,10 +153,16 @@ router.get('/stats/summary', (req, res) => {
 router.get('/:id', (req, res) => {
   const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
   if (!survey) return res.status(404).json({ message: 'Survey record not found.' });
+
+  const visibleIds = getVisibleUserIds(req.user);
+  if (visibleIds && !visibleIds.includes(survey.created_by)) {
+    return res.status(403).json({ message: 'You do not have permission to view this record.' });
+  }
+
   res.json({ data: survey });
 });
 
-// Both agents and admins can add new household records.
+// Anyone authenticated can add new household records.
 router.post('/', (req, res) => {
   const data = normalizePayload(req.body);
   const errors = validate(data);
@@ -152,8 +181,8 @@ router.post('/', (req, res) => {
   res.status(201).json({ data: survey });
 });
 
-// Only admins may edit an existing record: once an agent submits it, it is locked.
-router.put('/:id', requireRole('admin'), (req, res) => {
+// Only admin/developer may edit an existing record: once submitted, it is locked.
+router.put('/:id', requireRole('admin', 'developer'), (req, res) => {
   const existing = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
 
@@ -171,8 +200,8 @@ router.put('/:id', requireRole('admin'), (req, res) => {
   res.json({ data: survey });
 });
 
-// Only admins may delete a record.
-router.delete('/:id', requireRole('admin'), (req, res) => {
+// Only admin/developer may delete a record.
+router.delete('/:id', requireRole('admin', 'developer'), (req, res) => {
   const existing = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
   db.prepare('DELETE FROM surveys WHERE id = ?').run(req.params.id);

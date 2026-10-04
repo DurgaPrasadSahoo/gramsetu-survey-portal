@@ -7,7 +7,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import { CATEGORIES, RATION_CARD_TYPES } from '../constants/surveyOptions';
 
 export default function SurveyList() {
-  const { isAdmin } = useAuth();
+  const { canManageSurveys } = useAuth();
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -113,7 +113,7 @@ export default function SurveyList() {
               <span data-label="Added By">{row.created_by_name}</span>
               <span data-label="Actions" className="record-actions">
                 <Link to={`/surveys/${row.id}`} className="btn btn-outline btn-sm">View</Link>
-                {isAdmin && (
+                {canManageSurveys && (
                   <>
                     <Link to={`/surveys/${row.id}/edit`} className="btn btn-outline btn-sm">Edit</Link>
                     <button className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(row)}>Delete</button>

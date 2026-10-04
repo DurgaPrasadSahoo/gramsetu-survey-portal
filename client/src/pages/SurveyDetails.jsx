@@ -7,7 +7,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 
 export default function SurveyDetails() {
   const { id } = useParams();
-  const { isAdmin } = useAuth();
+  const { canManageSurveys } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [survey, setSurvey] = useState(null);
@@ -47,7 +47,7 @@ export default function SurveyDetails() {
         </div>
         <div className="page-header-actions">
           <Link to="/surveys" className="btn btn-outline">← Back to List</Link>
-          {isAdmin && (
+          {canManageSurveys && (
             <>
               <Link to={`/surveys/${id}/edit`} className="btn btn-primary">Edit Record</Link>
               <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>Delete</button>
@@ -59,9 +59,9 @@ export default function SurveyDetails() {
       {location.state?.justCreated && (
         <div className="alert alert-success">Survey record submitted successfully.</div>
       )}
-      {!isAdmin && (
+      {!canManageSurveys && (
         <div className="alert alert-info">
-          This record is locked. Field agents cannot edit or delete household records once submitted.
+          This record is locked. Only an administrator can edit or delete household records once submitted.
         </div>
       )}
 

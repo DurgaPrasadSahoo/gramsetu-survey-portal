@@ -22,29 +22,47 @@ Demo-Krishna/
 │   └── src/
 │       ├── db/          schema + connection + seed script
 │       ├── middleware/  JWT auth + role guard
-│       └── routes/      auth, surveys, agents
+│       ├── utils/       reporting-hierarchy helpers (visibility scoping)
+│       └── routes/      auth, surveys, users
 └── client/       React (Vite) frontend
     └── src/
         ├── api/         axios instance
         ├── context/     auth context
         ├── components/  shared UI (form, layout, nav, pagination, etc.)
-        ├── pages/       login, register, dashboard, survey list/add/edit/view, agents, profile
+        ├── pages/       login, register, dashboard, survey list/add/edit/view, team, profile
         └── styles/      global responsive stylesheet
 ```
 
-## Roles
+## Roles & hierarchy
 
-| Role  | Can view records | Can add records | Can edit records | Can delete records | Extra |
-|-------|:---:|:---:|:---:|:---:|---|
-| Agent | ✅ | ✅ | ❌ | ❌ | Once a survey is submitted it is locked — only an admin can correct it. |
-| Admin | ✅ | ✅ | ✅ | ✅ | Manages field agent accounts (activate/deactivate) on the "Field Agents" screen. |
+Five roles, top to bottom:
+
+```
+Developer -> Admin -> Head of District -> Head of Panchayat -> Field Agent
+```
+
+Every user (other than Developer/Admin) reports to exactly one user above
+them (`users.parent_id`), forming a tree: many Field Agents under one Head
+of Panchayat, many Heads of Panchayat under one Head of District.
+
+| Role | Can view records | Can add records | Can edit/delete records | Can view users | Extra |
+|------|:---:|:---:|:---:|:---:|---|
+| Field Agent | Own only | ✅ | ❌ | — | Once a survey is submitted it is locked — only an admin/developer can correct it. |
+| Head of Panchayat | Own team's (their Field Agents) | ✅ | ❌ | Own team | Cannot see other Heads of Panchayat's teams. |
+| Head of District | Own team's (their Heads of Panchayat + those Field Agents) | ✅ | ❌ | Own team | Cannot see other Heads of District's teams. |
+| Admin | Everyone's | ✅ | ✅ | Everyone | Manages user accounts (activate/deactivate) on the "Team Directory" screen. |
+| Developer | Everyone's | ✅ | ✅ | Everyone | The **only** role that can register new accounts, at any level of the hierarchy. |
+
+There is no public self-registration — a Developer creates every account
+(Head of District, Head of Panchayat, Field Agent, Admin, or another
+Developer) from the **Register New User** screen, picking who it reports to.
 
 ## Getting started
 
 ```bash
 # from the repo root
 npm run install:all   # installs server + client dependencies
-npm run seed           # creates the SQLite DB and two demo accounts
+npm run seed           # creates the SQLite DB and demo accounts for each role
 npm run dev             # starts the API (port 5000) and the Vite client (port 5173)
 ```
 
@@ -52,32 +70,34 @@ Then open **http://localhost:5173**.
 
 ### Demo credentials
 
-| Role  | Email | Password |
-|-------|-------|----------|
+| Role | Email | Password |
+|------|-------|----------|
+| Developer | developer@gramsetu.gov.in | Developer@123 |
 | Admin | admin@gramsetu.gov.in | Admin@123 |
-| Agent | agent@gramsetu.gov.in | Agent@123 |
-
-New field agents can also self-register from the **Register** link on the
-login page (registration always creates an `agent` account; admin accounts
-are provisioned via the seed script / database directly, as is typical for
-a government back-office portal).
+| Head of District | district.head@gramsetu.gov.in | District@123 |
+| Head of Panchayat | panchayat.head@gramsetu.gov.in | Panchayat@123 |
+| Field Agent | agent@gramsetu.gov.in | Agent@123 |
 
 ## Screens
 
-- **Login** — with demo credentials shown for convenience
-- **Register** (field agents)
+- **Login** — with demo credentials shown for convenience, and a show/hide
+  toggle on the password field
+- **Register New User** (developer only) — create an account for any role
+  and assign who it reports to
 - **Forgot Password** / **Reset Password** — since this demo has no email/SMS
   gateway wired up, the reset token is returned directly in the API response
   and auto-filled on the reset screen (see `server/src/routes/auth.js` for
   where a real integration would send it by email/SMS instead)
-- **Dashboard** — totals, category / ration-card breakdowns, asset-ownership stats
+- **Dashboard** — totals, category / ration-card breakdowns, asset-ownership
+  stats, scoped to what the signed-in user's hierarchy can see
 - **Household Records** (list) — search, filter by category/ration card, pagination,
-  responsive card layout on mobile
+  responsive card layout on mobile, scoped to the user's hierarchy
 - **New Survey Entry** — the full household survey form
 - **Household Record Details** (read-only view)
-- **Edit Household Record** (admin only)
+- **Edit Household Record** (admin/developer only)
 - **Government Schemes** — a reference list of Central and Odisha State schemes
-- **Field Agents** (admin only) — see each agent's submission count, activate/deactivate
+- **Team Directory** (developer/admin/Head of District/Head of Panchayat) —
+  see each user beneath you and their submission count, activate/deactivate
 - **My Profile**
 
 ## Survey fields captured

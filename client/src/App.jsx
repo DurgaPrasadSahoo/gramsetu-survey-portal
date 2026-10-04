@@ -10,7 +10,7 @@ import SurveyList from './pages/SurveyList';
 import SurveyAdd from './pages/SurveyAdd';
 import SurveyDetails from './pages/SurveyDetails';
 import SurveyEdit from './pages/SurveyEdit';
-import Agents from './pages/Agents';
+import Team from './pages/Team';
 import Profile from './pages/Profile';
 import SchemesInfo from './pages/SchemesInfo';
 import NotFound from './pages/NotFound';
@@ -19,7 +19,6 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
 
@@ -32,9 +31,17 @@ export default function App() {
           <Route path="/schemes" element={<SchemesInfo />} />
           <Route path="/profile" element={<Profile />} />
 
-          <Route element={<ProtectedRoute roles={['admin']} />}>
+          <Route element={<ProtectedRoute roles={['admin', 'developer']} />}>
             <Route path="/surveys/:id/edit" element={<SurveyEdit />} />
-            <Route path="/agents" element={<Agents />} />
+          </Route>
+
+          <Route element={<ProtectedRoute roles={['developer', 'admin', 'head_of_district', 'head_of_panchayat']} />}>
+            <Route path="/team" element={<Team />} />
+          </Route>
+
+          {/* Registering new accounts (any role, including field agents) is a developer-only action. */}
+          <Route element={<ProtectedRoute roles={['developer']} />}>
+            <Route path="/register" element={<Register />} />
           </Route>
         </Route>
       </Route>

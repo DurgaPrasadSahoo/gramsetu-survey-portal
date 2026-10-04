@@ -1,14 +1,19 @@
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { ROLE_LABELS } from '../constants/roles';
+
+const ALL_ROLES = Object.keys(ROLE_LABELS);
+const MANAGER_ROLES = ['developer', 'admin', 'head_of_district', 'head_of_panchayat'];
 
 const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Dashboard', icon: '🏠', roles: ['admin', 'agent'] },
-  { to: '/surveys', label: 'Household Records', icon: '📋', roles: ['admin', 'agent'] },
-  { to: '/surveys/new', label: 'New Survey Entry', icon: '📝', roles: ['admin', 'agent'] },
-  { to: '/schemes', label: 'Govt Schemes', icon: '📜', roles: ['admin', 'agent'] },
-  { to: '/agents', label: 'Field Agents', icon: '🧑‍💼', roles: ['admin'] },
-  { to: '/profile', label: 'My Profile', icon: '👤', roles: ['admin', 'agent'] },
+  { to: '/dashboard', label: 'Dashboard', icon: '🏠', roles: ALL_ROLES },
+  { to: '/surveys', label: 'Household Records', icon: '📋', roles: ALL_ROLES },
+  { to: '/surveys/new', label: 'New Survey Entry', icon: '📝', roles: ALL_ROLES },
+  { to: '/schemes', label: 'Govt Schemes', icon: '📜', roles: ALL_ROLES },
+  { to: '/team', label: 'Team Directory', icon: '🧑‍💼', roles: MANAGER_ROLES },
+  { to: '/register', label: 'Register New User', icon: '➕', roles: ['developer'] },
+  { to: '/profile', label: 'My Profile', icon: '👤', roles: ALL_ROLES },
 ];
 
 export default function Layout() {
@@ -37,7 +42,7 @@ export default function Layout() {
           </div>
         </div>
         <div className="topbar-user">
-          <span className="user-badge" data-role={user?.role}>{user?.role === 'admin' ? 'Administrator' : 'Field Agent'}</span>
+          <span className="user-badge" data-role={user?.role}>{ROLE_LABELS[user?.role] || user?.role}</span>
           <span className="user-name">{user?.name}</span>
           <button className="btn btn-ghost" onClick={logout}>Log out</button>
         </div>

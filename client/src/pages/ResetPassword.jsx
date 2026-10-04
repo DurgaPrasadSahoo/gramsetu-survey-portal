@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import AuthShell from '../components/AuthShell';
+import PasswordField from '../components/PasswordField';
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -43,14 +44,22 @@ export default function ResetPassword() {
               <span className="form-label">Reset Token</span>
               <input value={token} onChange={(e) => setToken(e.target.value)} required placeholder="Paste the token from the reset link" />
             </label>
-            <label className="form-field">
-              <span className="form-label">New Password</span>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
-            </label>
-            <label className="form-field">
-              <span className="form-label">Confirm New Password</span>
-              <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={6} />
-            </label>
+            <PasswordField
+              label="New Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              autoComplete="new-password"
+            />
+            <PasswordField
+              label="Confirm New Password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              minLength={6}
+              autoComplete="new-password"
+            />
             <button className="btn btn-primary btn-block" type="submit" disabled={loading}>
               {loading ? 'Resetting…' : 'Reset Password'}
             </button>

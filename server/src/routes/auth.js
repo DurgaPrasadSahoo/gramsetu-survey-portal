@@ -3,7 +3,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const db = require('../db/connection');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireRole } = require('../middleware/auth');
+const { ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
 
 const router = express.Router();
 
@@ -16,21 +17,47 @@ function signToken(user) {
 }
 
 function toPublicUser(user) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role, status: user.status };
+  return { id: user.id, name: user.name, email: user.email, role: user.role, status: user.status, parent_id: user.parent_id };
 }
 
-// Self-registration is for field agents only. Admin accounts are provisioned separately.
-router.post('/register', (req, res) => {
-  const { name, email, password, confirmPassword } = req.body;
+// Registering new accounts (of any role, including field agents) is a developer-only
+// action — there is no public self-registration. This is how every level of the
+// Head of District -> Head of Panchayat -> Field Agent hierarchy gets provisioned.
+router.post('/register', authenticate, requireRole('developer'), (req, res) => {
+  const { name, email, password, confirmPassword, role, parentId } = req.body;
 
-  if (!name || !email || !password) {
-    return res.status(400).json({ message: 'Name, email and password are required.' });
+  if (!name || !email || !password || !role) {
+    return res.status(400).json({ message: 'Name, email, password and role are required.' });
   }
   if (password.length < 6) {
     return res.status(400).json({ message: 'Password must be at least 6 characters.' });
   }
   if (confirmPassword !== undefined && password !== confirmPassword) {
     return res.status(400).json({ message: 'Passwords do not match.' });
+  }
+  if (!ROLES.includes(role)) {
+    return res.status(400).json({ message: 'Invalid role selected.' });
+  }
+
+  let resolvedParentId = null;
+  const requiredParentRoles = REQUIRED_PARENT_ROLES[role];
+  const optionalParentRoles = OPTIONAL_PARENT_ROLES[role];
+
+  if (requiredParentRoles) {
+    if (!parentId) {
+      return res.status(400).json({ message: 'Please select who this user reports to.' });
+    }
+    const parent = db.prepare('SELECT * FROM users WHERE id = ?').get(parentId);
+    if (!parent || !requiredParentRoles.includes(parent.role)) {
+      return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
+    }
+    resolvedParentId = parent.id;
+  } else if (optionalParentRoles && parentId) {
+    const parent = db.prepare('SELECT * FROM users WHERE id = ?').get(parentId);
+    if (!parent || !optionalParentRoles.includes(parent.role)) {
+      return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
+    }
+    resolvedParentId = parent.id;
   }
 
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -40,12 +67,11 @@ router.post('/register', (req, res) => {
 
   const hash = bcrypt.hashSync(password, 10);
   const info = db
-    .prepare(`INSERT INTO users (name, email, password_hash, role, status) VALUES (?, ?, ?, 'agent', 'active')`)
-    .run(name.trim(), email.toLowerCase().trim(), hash);
+    .prepare(`INSERT INTO users (name, email, password_hash, role, parent_id, status) VALUES (?, ?, ?, ?, ?, 'active')`)
+    .run(name.trim(), email.toLowerCase().trim(), hash, role, resolvedParentId);
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-  const token = signToken(user);
-  res.status(201).json({ token, user: toPublicUser(user) });
+  res.status(201).json({ user: toPublicUser(user) });
 });
 
 router.post('/login', (req, res) => {
