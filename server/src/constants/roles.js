@@ -16,4 +16,13 @@ const OPTIONAL_PARENT_ROLES = {
   head_of_district: ['admin', 'developer'],
 };
 
-module.exports = { ROLES, MANAGER_ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES };
+// Two-letter code used inside a profile's unique id (see utils/uniqueId.js).
+const ROLE_CODES = {
+  developer: 'DV',
+  admin: 'AD',
+  head_of_district: 'HD',
+  head_of_panchayat: 'HP',
+  field_agent: 'FA',
+};
+
+module.exports = { ROLES, MANAGER_ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES, ROLE_CODES };

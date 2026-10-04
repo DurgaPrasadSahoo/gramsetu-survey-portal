@@ -12,6 +12,7 @@ import SurveyDetails from './pages/SurveyDetails';
 import SurveyEdit from './pages/SurveyEdit';
 import EditRequests from './pages/EditRequests';
 import Team from './pages/Team';
+import UserDetail from './pages/UserDetail';
 import Profile from './pages/Profile';
 import SchemesInfo from './pages/SchemesInfo';
 import NotFound from './pages/NotFound';
@@ -38,6 +39,7 @@ export default function App() {
 
           <Route element={<ProtectedRoute roles={['developer', 'admin', 'head_of_district', 'head_of_panchayat']} />}>
             <Route path="/team" element={<Team />} />
+            <Route path="/team/:id" element={<UserDetail />} />
           </Route>
 
           {/* Registering new accounts (any role, including field agents) and deciding

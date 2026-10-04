@@ -2,14 +2,18 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import SurveyForm from '../components/SurveyForm';
+import ConfirmDialog from '../components/ConfirmDialog';
 
 export default function SurveyAdd() {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState('');
+  const [pendingValues, setPendingValues] = useState(null);
   const navigate = useNavigate();
 
-  const handleSubmit = async (values) => {
+  const handleConfirmSubmit = async () => {
+    const values = pendingValues;
+    setPendingValues(null);
     setSubmitting(true);
     setServerError('');
     setErrors({});
@@ -40,8 +44,17 @@ export default function SurveyAdd() {
       </div>
       {serverError && <div className="alert alert-error">{serverError}</div>}
       <div className="panel">
-        <SurveyForm onSubmit={handleSubmit} submitting={submitting} submitLabel="Submit Survey Entry" errors={errors} />
+        <SurveyForm onSubmit={setPendingValues} submitting={submitting} submitLabel="Submit Survey Entry" errors={errors} />
       </div>
+
+      <ConfirmDialog
+        open={!!pendingValues}
+        title="Submit Survey Entry"
+        message="Submit this household survey entry? Once submitted, it will be locked until an edit request is approved."
+        confirmLabel="Submit"
+        onConfirm={handleConfirmSubmit}
+        onCancel={() => setPendingValues(null)}
+      />
     </div>
   );
 }

@@ -21,6 +21,7 @@ export default function SurveyDetails() {
   const [survey, setSurvey] = useState(null);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmEditRequest, setConfirmEditRequest] = useState(false);
   const [requesting, setRequesting] = useState(false);
 
   const loadSurvey = () => {
@@ -43,6 +44,7 @@ export default function SurveyDetails() {
   };
 
   const handleEditRequest = async () => {
+    setConfirmEditRequest(false);
     setRequesting(true);
     setError('');
     try {
@@ -66,14 +68,14 @@ export default function SurveyDetails() {
         <div>
           <h1>{survey.full_name}</h1>
           <p className="page-subtitle">
-            Household record #{survey.id} · added by {survey.created_by_name} on{' '}
+            {survey.unique_id} · added by {survey.created_by_name} on{' '}
             {new Date(survey.created_at).toLocaleDateString()}
             {survey.updated_at && ` · last edited ${new Date(survey.updated_at).toLocaleDateString()}`}
           </p>
         </div>
         <div className="page-header-actions">
           <Link to="/surveys" className="btn btn-outline">← Back to List</Link>
-          <button className="btn btn-outline" disabled={!perms.canRequestEdit || requesting} onClick={handleEditRequest}>
+          <button className="btn btn-outline" disabled={!perms.canRequestEdit || requesting} onClick={() => setConfirmEditRequest(true)}>
             {requesting ? 'Requesting…' : 'Edit Request'}
           </button>
           {perms.canEdit ? (
@@ -107,6 +109,15 @@ export default function SurveyDetails() {
         danger
         onConfirm={handleDelete}
         onCancel={() => setConfirmDelete(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmEditRequest}
+        title="Request an Edit"
+        message={`Send a request to the developer to unlock "${survey.full_name}" for editing?`}
+        confirmLabel="Send Request"
+        onConfirm={handleEditRequest}
+        onCancel={() => setConfirmEditRequest(false)}
       />
     </div>
   );

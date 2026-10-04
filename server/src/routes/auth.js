@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const db = require('../db/connection');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
+const { ODISHA_DISTRICTS } = require('../constants/districtCodes');
+const { buildProfileId, generateUniqueId } = require('../utils/uniqueId');
 
 const router = express.Router();
 
@@ -17,17 +19,26 @@ function signToken(user) {
 }
 
 function toPublicUser(user) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role, status: user.status, parent_id: user.parent_id };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    status: user.status,
+    parent_id: user.parent_id,
+    district: user.district,
+    unique_id: user.unique_id,
+  };
 }
 
 // Registering new accounts (of any role, including field agents) is a developer-only
 // action — there is no public self-registration. This is how every level of the
 // Head of District -> Head of Panchayat -> Field Agent hierarchy gets provisioned.
 router.post('/register', authenticate, requireRole('developer'), (req, res) => {
-  const { name, email, password, confirmPassword, role, parentId } = req.body;
+  const { name, email, password, confirmPassword, role, parentId, district } = req.body;
 
-  if (!name || !email || !password || !role) {
-    return res.status(400).json({ message: 'Name, email, password and role are required.' });
+  if (!name || !email || !password || !role || !district) {
+    return res.status(400).json({ message: 'Name, email, password, role and district are required.' });
   }
   if (password.length < 6) {
     return res.status(400).json({ message: 'Password must be at least 6 characters.' });
@@ -37,6 +48,9 @@ router.post('/register', authenticate, requireRole('developer'), (req, res) => {
   }
   if (!ROLES.includes(role)) {
     return res.status(400).json({ message: 'Invalid role selected.' });
+  }
+  if (!ODISHA_DISTRICTS.includes(district)) {
+    return res.status(400).json({ message: 'Invalid district selected.' });
   }
 
   let resolvedParentId = null;
@@ -66,9 +80,16 @@ router.post('/register', authenticate, requireRole('developer'), (req, res) => {
   }
 
   const hash = bcrypt.hashSync(password, 10);
+  const uniqueId = generateUniqueId(
+    () => buildProfileId(role, district),
+    (candidate) => !!db.prepare('SELECT 1 FROM users WHERE unique_id = ?').get(candidate)
+  );
   const info = db
-    .prepare(`INSERT INTO users (name, email, password_hash, role, parent_id, status) VALUES (?, ?, ?, ?, ?, 'active')`)
-    .run(name.trim(), email.toLowerCase().trim(), hash, role, resolvedParentId);
+    .prepare(
+      `INSERT INTO users (name, email, password_hash, role, parent_id, district, unique_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`
+    )
+    .run(name.trim(), email.toLowerCase().trim(), hash, role, resolvedParentId, district, uniqueId);
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ user: toPublicUser(user) });

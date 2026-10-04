@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import PasswordField from '../components/PasswordField';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES, ROLE_LABELS, roleLabel } from '../constants/roles';
+import { ODISHA_DISTRICTS } from '../constants/surveyOptions';
 
 const CREATABLE_ROLES = ['head_of_district', 'head_of_panchayat', 'field_agent', 'admin', 'developer'];
 
-const EMPTY_FORM = { name: '', email: '', password: '', confirmPassword: '', role: 'field_agent', parentId: '' };
+const EMPTY_FORM = {
+  name: '', email: '', password: '', confirmPassword: '', role: 'field_agent', parentId: '', district: 'Khordha',
+};
 
 export default function Register() {
   const [form, setForm] = useState(EMPTY_FORM);
@@ -14,6 +18,7 @@ export default function Register() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
 
   const needsParent = !!REQUIRED_PARENT_ROLES[form.role];
   const parentIsOptional = !!OPTIONAL_PARENT_ROLES[form.role];
@@ -34,7 +39,7 @@ export default function Register() {
 
   const handleRoleChange = (role) => setForm((prev) => ({ ...prev, role, parentId: '' }));
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     setError('');
     setSuccess('');
@@ -46,6 +51,11 @@ export default function Register() {
       setError('Please select who this user reports to.');
       return;
     }
+    setConfirmSubmit(true);
+  };
+
+  const handleConfirmSubmit = async () => {
+    setConfirmSubmit(false);
     setLoading(true);
     try {
       const { data } = await api.post('/auth/register', {
@@ -55,8 +65,9 @@ export default function Register() {
         confirmPassword: form.confirmPassword,
         role: form.role,
         parentId: form.parentId || undefined,
+        district: form.district,
       });
-      setSuccess(`${roleLabel(data.user.role)} account created for ${data.user.name} (${data.user.email}).`);
+      setSuccess(`${roleLabel(data.user.role)} account created for ${data.user.name} (${data.user.email}) — ${data.user.unique_id}.`);
       setForm(EMPTY_FORM);
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to create this account. Please try again.');
@@ -97,6 +108,12 @@ export default function Register() {
               ))}
             </select>
           </label>
+          <label className="form-field">
+            <span className="form-label">District</span>
+            <select value={form.district} onChange={(e) => update('district', e.target.value)} required>
+              {ODISHA_DISTRICTS.map((d) => <option key={d}>{d}</option>)}
+            </select>
+          </label>
 
           {showParentField && (
             <label className="form-field">
@@ -123,6 +140,15 @@ export default function Register() {
           </p>
         </form>
       </div>
+
+      <ConfirmDialog
+        open={confirmSubmit}
+        title="Create Account"
+        message={`Create a ${roleLabel(form.role)} account for ${form.name || 'this user'} (${form.email})?`}
+        confirmLabel="Create Account"
+        onConfirm={handleConfirmSubmit}
+        onCancel={() => setConfirmSubmit(false)}
+      />
     </div>
   );
 }

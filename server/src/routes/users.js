@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { authenticate, requireRole } = require('../middleware/auth');
-const { getVisibleUserIds, getAncestorChain } = require('../utils/hierarchy');
+const { getVisibleUserIds, getAncestorChain, getDescendantIds } = require('../utils/hierarchy');
 const { MANAGER_ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
 
 const router = express.Router();
@@ -9,11 +9,11 @@ router.use(authenticate);
 
 // Team directory: every role above field agent can see the users beneath them
 // in the hierarchy (and only those users) with how many surveys each has
-// submitted. Admin/developer see everyone.
+// submitted. Admin/developer see everyone. Optionally filtered to one role.
 router.get('/', requireRole(...MANAGER_ROLES), (req, res) => {
   const visibleIds = getVisibleUserIds(req.user);
   const params = {};
-  let where;
+  const clauses = [];
 
   if (visibleIds) {
     const subordinateIds = visibleIds.filter((id) => id !== req.user.id);
@@ -24,20 +24,26 @@ router.get('/', requireRole(...MANAGER_ROLES), (req, res) => {
       params[`id${i}`] = id;
       return `@id${i}`;
     });
-    where = `WHERE u.id IN (${placeholders.join(', ')})`;
+    clauses.push(`u.id IN (${placeholders.join(', ')})`);
   } else {
     params.selfId = req.user.id;
-    where = 'WHERE u.id != @selfId';
+    clauses.push('u.id != @selfId');
+  }
+
+  if (req.query.role) {
+    params.role = req.query.role;
+    clauses.push('u.role = @role');
   }
 
   const users = db
     .prepare(
-      `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, p.name AS parent_name,
+      `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.unique_id,
+              p.name AS parent_name,
               COUNT(s.id) AS surveyCount
        FROM users u
        LEFT JOIN users p ON p.id = u.parent_id
        LEFT JOIN surveys s ON s.created_by = u.id
-       ${where}
+       WHERE ${clauses.join(' AND ')}
        GROUP BY u.id
        ORDER BY u.created_at DESC`
     )
@@ -66,6 +72,48 @@ router.get('/parents', requireRole('developer'), (req, res) => {
 // shown on the Profile screen.
 router.get('/hierarchy', (req, res) => {
   res.json({ data: getAncestorChain(req.user.id) });
+});
+
+// A single user's profile, plus everyone who reports to them (directly or
+// indirectly) — the Team Directory's "View" action. The requester must
+// themselves be allowed to see the target (self, or within their downline).
+router.get('/:id', requireRole(...MANAGER_ROLES), (req, res) => {
+  const targetId = Number(req.params.id);
+  const visibleIds = getVisibleUserIds(req.user);
+  if (visibleIds && !visibleIds.includes(targetId)) {
+    return res.status(403).json({ message: 'You do not have permission to view this user.' });
+  }
+
+  const target = db
+    .prepare(
+      `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.unique_id,
+              p.name AS parent_name,
+              COUNT(s.id) AS surveyCount
+       FROM users u
+       LEFT JOIN users p ON p.id = u.parent_id
+       LEFT JOIN surveys s ON s.created_by = u.id
+       WHERE u.id = ?
+       GROUP BY u.id`
+    )
+    .get(targetId);
+  if (!target) return res.status(404).json({ message: 'User not found.' });
+
+  const subordinateIds = getDescendantIds(targetId).filter((id) => id !== targetId);
+  const subordinates = subordinateIds.length
+    ? db
+        .prepare(
+          `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.unique_id,
+                  COUNT(s.id) AS surveyCount
+           FROM users u
+           LEFT JOIN surveys s ON s.created_by = u.id
+           WHERE u.id IN (${subordinateIds.map(() => '?').join(', ')})
+           GROUP BY u.id
+           ORDER BY u.created_at DESC`
+        )
+        .all(...subordinateIds)
+    : [];
+
+  res.json({ data: { ...target, subordinates } });
 });
 
 router.patch('/:id/status', requireRole(...MANAGER_ROLES), (req, res) => {

@@ -3,6 +3,7 @@ const db = require('../db/connection');
 const { authenticate } = require('../middleware/auth');
 const { getVisibleUserIds } = require('../utils/hierarchy');
 const { SURVEY_STATUS, EDIT_REQUEST_STATUS } = require('../constants/surveyStatus');
+const { buildSurveyId, generateUniqueId } = require('../utils/uniqueId');
 
 const router = express.Router();
 router.use(authenticate);
@@ -211,14 +212,19 @@ router.post('/', (req, res) => {
   const errors = { ...validate(data), ...findDuplicateErrors(data) };
   if (Object.keys(errors).length) return res.status(400).json({ errors });
 
+  const uniqueId = generateUniqueId(
+    () => buildSurveyId(data.district, data.panchayat, data.village_town),
+    (candidate) => !!db.prepare('SELECT 1 FROM surveys WHERE unique_id = ?').get(candidate)
+  );
+
   const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];
   const placeholders = columns.map((c) => `@${c}`).join(', ');
   const info = db
     .prepare(
-      `INSERT INTO surveys (${columns.join(', ')}, created_by, created_by_name, status)
-       VALUES (${placeholders}, @created_by, @created_by_name, @status)`
+      `INSERT INTO surveys (${columns.join(', ')}, created_by, created_by_name, status, unique_id)
+       VALUES (${placeholders}, @created_by, @created_by_name, @status, @unique_id)`
     )
-    .run({ ...data, created_by: req.user.id, created_by_name: req.user.name, status: SURVEY_STATUS.FINAL });
+    .run({ ...data, created_by: req.user.id, created_by_name: req.user.name, status: SURVEY_STATUS.FINAL, unique_id: uniqueId });
 
   const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ data: survey });

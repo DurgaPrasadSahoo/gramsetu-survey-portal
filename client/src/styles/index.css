@@ -350,7 +350,22 @@ h1, h2, h3 {
 
 .record-table--surveys .record-table-head,
 .record-table--surveys .record-row {
-  grid-template-columns: 0.5fr 1.4fr 1fr 1.2fr 1.2fr 1fr 0.9fr;
+  grid-template-columns: 0.5fr 1.3fr 1.3fr 1fr 1.2fr 1.2fr 1fr 0.9fr;
+}
+
+.record-table--team .record-table-head,
+.record-table--team .record-row {
+  grid-template-columns: 0.4fr 1.3fr 1.3fr 1fr 1.1fr 0.9fr 0.8fr 0.9fr;
+}
+
+.record-table--tickets .record-table-head,
+.record-table--tickets .record-row {
+  grid-template-columns: 0.4fr 1.2fr 1.4fr 0.9fr 1.3fr 1.1fr;
+}
+
+.record-table--subordinates .record-table-head,
+.record-table--subordinates .record-row {
+  grid-template-columns: 0.4fr 1.3fr 1.4fr 1fr 1.2fr 0.9fr;
 }
 
 .badge {

@@ -3,6 +3,7 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 require('dotenv').config();
 const { ROLES } = require('../constants/roles');
+const { buildProfileId, buildSurveyId, generateUniqueId } = require('../utils/uniqueId');
 
 const dbPath = process.env.DB_PATH || './data/gramsetu.db';
 const resolvedPath = path.resolve(__dirname, '../../', dbPath);
@@ -24,6 +25,8 @@ const USERS_TABLE_SQL = `
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN (${ROLES.map((r) => `'${r}'`).join(', ')})),
     parent_id INTEGER REFERENCES users(id),
+    district TEXT,
+    unique_id TEXT,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     reset_token TEXT,
     reset_token_expires INTEGER,
@@ -68,11 +71,44 @@ if (!usersTableExists) {
   }
 }
 
+// Older installs predate district/unique_id on users.
+const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userColumns.includes('district')) {
+  db.exec('ALTER TABLE users ADD COLUMN district TEXT');
+}
+if (!userColumns.includes('unique_id')) {
+  db.exec('ALTER TABLE users ADD COLUMN unique_id TEXT');
+}
+
+// Backfill: every pre-existing account needs a home district (defaulted to
+// Khordha, this project's base) and a unique id, since both are now assigned
+// at creation time going forward.
+db.exec(`UPDATE users SET district = 'Khordha' WHERE district IS NULL OR district = ''`);
+
+const usersNeedingId = db.prepare('SELECT id, role, district FROM users WHERE unique_id IS NULL OR unique_id = \'\'').all();
+if (usersNeedingId.length) {
+  const idExists = db.prepare('SELECT 1 FROM users WHERE unique_id = ?');
+  const setUniqueId = db.prepare('UPDATE users SET unique_id = ? WHERE id = ?');
+  for (const u of usersNeedingId) {
+    const uniqueId = generateUniqueId(
+      () => buildProfileId(u.role, u.district),
+      (candidate) => !!idExists.get(candidate)
+    );
+    setUniqueId.run(uniqueId, u.id);
+  }
+}
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_users_parent_id ON users(parent_id)');
+try {
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_unique_id ON users(unique_id)');
+} catch (err) {
+  console.warn('Could not create uniqueness index on users.unique_id:', err.message);
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS surveys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_id TEXT,
     full_name TEXT NOT NULL,
     guardian_name TEXT,
     gender TEXT,
@@ -146,6 +182,23 @@ if (!surveyColumns.includes('status')) {
 if (!surveyColumns.includes('panchayat')) {
   db.exec('ALTER TABLE surveys ADD COLUMN panchayat TEXT');
 }
+if (!surveyColumns.includes('unique_id')) {
+  db.exec('ALTER TABLE surveys ADD COLUMN unique_id TEXT');
+}
+
+// Backfill unique ids for any pre-existing survey rows.
+const surveysNeedingId = db.prepare("SELECT id, district, panchayat, village_town FROM surveys WHERE unique_id IS NULL OR unique_id = ''").all();
+if (surveysNeedingId.length) {
+  const surveyIdExists = db.prepare('SELECT 1 FROM surveys WHERE unique_id = ?');
+  const setSurveyUniqueId = db.prepare('UPDATE surveys SET unique_id = ? WHERE id = ?');
+  for (const s of surveysNeedingId) {
+    const uniqueId = generateUniqueId(
+      () => buildSurveyId(s.district, s.panchayat, s.village_town),
+      (candidate) => !!surveyIdExists.get(candidate)
+    );
+    setSurveyUniqueId.run(uniqueId, s.id);
+  }
+}
 
 // Older rows predate the canonical xxxx-xxxx-xxxx Aadhaar format — reformat any
 // still stored as a bare 12-digit string (dashed/empty values are left untouched).
@@ -161,6 +214,7 @@ db.exec(`
 try {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_mobile_unique ON surveys(mobile_number)');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_aadhaar_unique ON surveys(aadhaar_number)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_unique_id ON surveys(unique_id)');
 } catch (err) {
   console.warn('Could not create uniqueness indexes on surveys (existing duplicate data?):', err.message);
 }
