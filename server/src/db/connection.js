@@ -147,4 +147,22 @@ if (!surveyColumns.includes('panchayat')) {
   db.exec('ALTER TABLE surveys ADD COLUMN panchayat TEXT');
 }
 
+// Older rows predate the canonical xxxx-xxxx-xxxx Aadhaar format — reformat any
+// still stored as a bare 12-digit string (dashed/empty values are left untouched).
+db.exec(`
+  UPDATE surveys
+  SET aadhaar_number = substr(aadhaar_number, 1, 4) || '-' || substr(aadhaar_number, 5, 4) || '-' || substr(aadhaar_number, 9, 4)
+  WHERE aadhaar_number GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+`);
+
+// Defense in depth against duplicate mobile/Aadhaar numbers, on top of the
+// application-level check in routes/surveys.js. Wrapped because an existing
+// install could in theory already contain duplicates this can't retroactively fix.
+try {
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_mobile_unique ON surveys(mobile_number)');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_aadhaar_unique ON surveys(aadhaar_number)');
+} catch (err) {
+  console.warn('Could not create uniqueness indexes on surveys (existing duplicate data?):', err.message);
+}
+
 module.exports = db;

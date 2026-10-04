@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db/connection');
 const { authenticate, requireRole } = require('../middleware/auth');
-const { getVisibleUserIds } = require('../utils/hierarchy');
+const { getVisibleUserIds, getAncestorChain } = require('../utils/hierarchy');
 const { MANAGER_ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
 
 const router = express.Router();
@@ -60,6 +60,12 @@ router.get('/parents', requireRole('developer'), (req, res) => {
     .prepare(`SELECT id, name, role FROM users WHERE role IN (${placeholders.join(', ')}) AND status = 'active' ORDER BY name`)
     .all(params);
   res.json({ data: rows });
+});
+
+// The requester's own reporting chain, top ancestor first, themselves last —
+// shown on the Profile screen.
+router.get('/hierarchy', (req, res) => {
+  res.json({ data: getAncestorChain(req.user.id) });
 });
 
 router.patch('/:id/status', requireRole(...MANAGER_ROLES), (req, res) => {

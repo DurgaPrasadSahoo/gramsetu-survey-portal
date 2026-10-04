@@ -4,9 +4,11 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Pagination from '../components/Pagination';
 import ConfirmDialog from '../components/ConfirmDialog';
+import ActionsMenu from '../components/ActionsMenu';
 import { CATEGORIES } from '../constants/surveyOptions';
 import { STATUS_BADGE_CLASS } from '../constants/surveyStatus';
 import { getSurveyPermissions } from '../utils/surveyPermissions';
+import { formatAadhaar } from '../utils/aadhaar';
 
 const PAGE_SIZE = 10;
 
@@ -114,33 +116,28 @@ export default function SurveyList() {
           </div>
           {rows.map((row, index) => {
             const perms = getSurveyPermissions(row, user);
+            const menuItems = [
+              { label: 'View', to: `/surveys/${row.id}` },
+              {
+                label: requestingId === row.id ? 'Requesting…' : 'Edit Request',
+                disabled: !perms.canRequestEdit || requestingId === row.id,
+                onClick: () => handleEditRequest(row),
+              },
+              { label: 'Edit', to: `/surveys/${row.id}/edit`, disabled: !perms.canEdit },
+              { label: 'Delete', disabled: !perms.canDelete, danger: true, onClick: () => setDeleteTarget(row) },
+            ];
             return (
               <div className="record-row" key={row.id}>
                 <span data-label="SL No.">{(page - 1) * PAGE_SIZE + index + 1}</span>
                 <span data-label="Name">{row.full_name}</span>
                 <span data-label="Mobile">{row.mobile_number}</span>
-                <span data-label="Aadhaar Number">{row.aadhaar_number || '—'}</span>
+                <span data-label="Aadhaar Number">{formatAadhaar(row.aadhaar_number) || '—'}</span>
                 <span data-label="Added By">{row.created_by_name}</span>
                 <span data-label="Status">
                   <span className={`badge ${STATUS_BADGE_CLASS[row.status] || ''}`}>{row.status}</span>
                 </span>
                 <span data-label="Actions" className="record-actions">
-                  <Link to={`/surveys/${row.id}`} className="btn btn-outline btn-sm">View</Link>
-                  <button
-                    className="btn btn-outline btn-sm"
-                    disabled={!perms.canRequestEdit || requestingId === row.id}
-                    onClick={() => handleEditRequest(row)}
-                  >
-                    {requestingId === row.id ? 'Requesting…' : 'Edit Request'}
-                  </button>
-                  {perms.canEdit ? (
-                    <Link to={`/surveys/${row.id}/edit`} className="btn btn-outline btn-sm">Edit</Link>
-                  ) : (
-                    <button className="btn btn-outline btn-sm" disabled>Edit</button>
-                  )}
-                  <button className="btn btn-danger btn-sm" disabled={!perms.canDelete} onClick={() => setDeleteTarget(row)}>
-                    Delete
-                  </button>
+                  <ActionsMenu items={menuItems} />
                 </span>
               </div>
             );

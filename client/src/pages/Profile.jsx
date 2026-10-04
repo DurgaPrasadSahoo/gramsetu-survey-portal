@@ -1,8 +1,19 @@
+import { useEffect, useState } from 'react';
+import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { ROLE_BADGE_CLASS, roleLabel } from '../constants/roles';
 
 export default function Profile() {
   const { user } = useAuth();
+  const [hierarchy, setHierarchy] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api
+      .get('/users/hierarchy')
+      .then(({ data }) => setHierarchy(data.data))
+      .catch(() => setError('Unable to load your reporting hierarchy.'));
+  }, []);
 
   return (
     <div>
@@ -35,6 +46,28 @@ export default function Profile() {
             <span className="badge badge-active">{user?.status}</span>
           </div>
         </div>
+      </div>
+
+      <div className="panel">
+        <h3>Reporting Hierarchy</h3>
+        <p className="muted" style={{ marginTop: '-0.3rem', marginBottom: '0.9rem' }}>
+          Your chain of command, from the top of the organisation down to you.
+        </p>
+        {error && <div className="alert alert-error">{error}</div>}
+        {!error && !hierarchy && <div className="page-loader">Loading hierarchy…</div>}
+        {hierarchy && (
+          <ol className="hierarchy-chain">
+            {hierarchy.map((node) => (
+              <li key={node.id} className={`hierarchy-step ${node.id === user?.id ? 'is-self' : ''}`}>
+                <span className={`badge ${ROLE_BADGE_CLASS[node.role] || ''}`}>{roleLabel(node.role)}</span>
+                <span className="hierarchy-name">
+                  {node.name}
+                  {node.id === user?.id && ' (You)'}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
 
       <div className="panel">

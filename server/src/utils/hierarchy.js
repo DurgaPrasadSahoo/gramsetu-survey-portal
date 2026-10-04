@@ -1,6 +1,7 @@
 const db = require('../db/connection');
 
 const childrenStmt = db.prepare('SELECT id FROM users WHERE parent_id = ?');
+const userByIdStmt = db.prepare('SELECT id, name, role, parent_id FROM users WHERE id = ?');
 
 // A user's own id plus every user beneath them in the reporting tree
 // (children, grandchildren, ...).
@@ -19,4 +20,16 @@ function getVisibleUserIds(user) {
   return getDescendantIds(user.id);
 }
 
-module.exports = { getDescendantIds, getVisibleUserIds };
+// The full reporting chain for a user, from the topmost ancestor (Developer/Admin,
+// or whoever has no parent) down to the user themselves, inclusive.
+function getAncestorChain(userId) {
+  const chain = [];
+  let current = userByIdStmt.get(userId);
+  while (current) {
+    chain.unshift({ id: current.id, name: current.name, role: current.role });
+    current = current.parent_id ? userByIdStmt.get(current.parent_id) : null;
+  }
+  return chain;
+}
+
+module.exports = { getDescendantIds, getVisibleUserIds, getAncestorChain };

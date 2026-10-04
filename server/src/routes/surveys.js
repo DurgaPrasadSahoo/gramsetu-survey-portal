@@ -62,6 +62,14 @@ const TEXT_FIELDS = [
 
 const NUMERIC_FIELDS = ['family_members_count', 'monthly_income', 'land_owned_acres'];
 
+// Canonical on-screen and in-database representation is always xxxx-xxxx-xxxx,
+// regardless of how the client sent it (with dashes, without, with spaces, ...).
+function formatAadhaar(value) {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length !== 12) return digits;
+  return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`;
+}
+
 function normalizePayload(body) {
   const data = {};
   for (const field of TEXT_FIELDS) {
@@ -74,7 +82,25 @@ function normalizePayload(body) {
   for (const field of BOOL_FIELDS) {
     data[field] = body[field] ? 1 : 0;
   }
+  if (data.aadhaar_number) data.aadhaar_number = formatAadhaar(data.aadhaar_number);
   return data;
+}
+
+// Any other survey record already using this mobile/Aadhaar number. `excludeId`
+// leaves the record itself out of the check when updating.
+function findDuplicateErrors(data, excludeId) {
+  const errors = {};
+  const selfId = excludeId ?? -1;
+
+  const mobileDupe = db.prepare('SELECT id FROM surveys WHERE mobile_number = ? AND id != ?').get(data.mobile_number, selfId);
+  if (mobileDupe) errors.mobile_number = 'Another household record already uses this mobile number.';
+
+  if (data.aadhaar_number) {
+    const aadhaarDupe = db.prepare('SELECT id FROM surveys WHERE aadhaar_number = ? AND id != ?').get(data.aadhaar_number, selfId);
+    if (aadhaarDupe) errors.aadhaar_number = 'Another household record already uses this Aadhaar number.';
+  }
+
+  return errors;
 }
 
 function validate(data) {
@@ -84,7 +110,7 @@ function validate(data) {
   else if (!/^\d{10}$/.test(data.mobile_number)) errors.mobile_number = 'Mobile number must be 10 digits.';
 
   if (!data.aadhaar_number) errors.aadhaar_number = 'Aadhaar number is required.';
-  else if (!/^\d{12}$/.test(data.aadhaar_number)) errors.aadhaar_number = 'Aadhaar number must be 12 digits.';
+  else if (!/^\d{4}-\d{4}-\d{4}$/.test(data.aadhaar_number)) errors.aadhaar_number = 'Aadhaar number must be in xxxx-xxxx-xxxx format.';
 
   if (!data.gender) errors.gender = 'Gender is required.';
   if (!data.dob) errors.dob = 'Date of birth is required.';
@@ -182,7 +208,7 @@ router.get('/:id', (req, res) => {
 // Anyone authenticated can add new household records.
 router.post('/', (req, res) => {
   const data = normalizePayload(req.body);
-  const errors = validate(data);
+  const errors = { ...validate(data), ...findDuplicateErrors(data) };
   if (Object.keys(errors).length) return res.status(400).json({ errors });
 
   const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];
@@ -239,7 +265,7 @@ router.put('/:id', (req, res) => {
   if (denial) return res.status(denial.status).json({ message: denial.message });
 
   const data = normalizePayload(req.body);
-  const errors = validate(data);
+  const errors = { ...validate(data), ...findDuplicateErrors(data, existing.id) };
   if (Object.keys(errors).length) return res.status(400).json({ errors });
 
   const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];

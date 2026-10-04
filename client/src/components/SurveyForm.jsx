@@ -3,6 +3,7 @@ import {
   ODISHA_DISTRICTS, getPanchayatsForDistrict, BHUBANESWAR_LOCALITIES, CATEGORIES, RELIGIONS,
   RATION_CARD_TYPES, HOUSE_TYPES, HOUSE_OWNERSHIP, OCCUPATIONS, ASSET_FIELDS, CENTRAL_SCHEMES, ODISHA_SCHEMES,
 } from '../constants/surveyOptions';
+import { formatAadhaar } from '../utils/aadhaar';
 
 export const EMPTY_SURVEY = {
   full_name: '', guardian_name: '', gender: '', dob: '', aadhaar_number: '',
@@ -38,6 +39,8 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
     const { name, type, value, checked } = e.target;
     update(name, type === 'checkbox' ? checked : value);
   };
+
+  const handleAadhaarChange = (e) => update('aadhaar_number', formatAadhaar(e.target.value));
 
   const panchayatOptions = getPanchayatsForDistrict(values.district);
 
@@ -91,7 +94,15 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
               <input type="date" name="dob" value={values.dob || ''} onChange={handleChange} required />
             </Field>
             <Field label="Aadhaar Number" required error={errors.aadhaar_number}>
-              <input name="aadhaar_number" value={values.aadhaar_number} onChange={handleChange} maxLength={12} placeholder="12-digit UID" required />
+              <input
+                name="aadhaar_number"
+                value={values.aadhaar_number}
+                onChange={handleAadhaarChange}
+                maxLength={14}
+                placeholder="xxxx-xxxx-xxxx"
+                inputMode="numeric"
+                required
+              />
             </Field>
             <Field label="Mobile Number" required error={errors.mobile_number}>
               <input name="mobile_number" value={values.mobile_number} onChange={handleChange} maxLength={10} required placeholder="10-digit mobile" />
