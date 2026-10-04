@@ -1,7 +1,8 @@
 const express = require('express');
 const db = require('../db/connection');
-const { authenticate, requireRole } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 const { getVisibleUserIds } = require('../utils/hierarchy');
+const { SURVEY_STATUS, EDIT_REQUEST_STATUS } = require('../constants/surveyStatus');
 
 const router = express.Router();
 router.use(authenticate);
@@ -43,7 +44,7 @@ const TEXT_FIELDS = [
   'email',
   'state',
   'district',
-  'block',
+  'panchayat',
   'village_town',
   'address',
   'pincode',
@@ -81,10 +82,26 @@ function validate(data) {
   if (!data.full_name) errors.full_name = 'Full name is required.';
   if (!data.mobile_number) errors.mobile_number = 'Mobile number is required.';
   else if (!/^\d{10}$/.test(data.mobile_number)) errors.mobile_number = 'Mobile number must be 10 digits.';
-  if (data.aadhaar_number && !/^\d{12}$/.test(data.aadhaar_number)) {
-    errors.aadhaar_number = 'Aadhaar number must be 12 digits.';
-  }
-  if (data.pincode && !/^\d{6}$/.test(data.pincode)) errors.pincode = 'Pincode must be 6 digits.';
+
+  if (!data.aadhaar_number) errors.aadhaar_number = 'Aadhaar number is required.';
+  else if (!/^\d{12}$/.test(data.aadhaar_number)) errors.aadhaar_number = 'Aadhaar number must be 12 digits.';
+
+  if (!data.gender) errors.gender = 'Gender is required.';
+  if (!data.dob) errors.dob = 'Date of birth is required.';
+  if (!data.district) errors.district = 'District is required.';
+  if (!data.panchayat) errors.panchayat = 'Panchayat is required.';
+  if (!data.village_town) errors.village_town = 'Village is required.';
+
+  if (!data.pincode) errors.pincode = 'Pincode is required.';
+  else if (!/^\d{6}$/.test(data.pincode)) errors.pincode = 'Pincode must be 6 digits.';
+
+  if (!data.category) errors.category = 'Category is required.';
+  if (!data.religion) errors.religion = 'Religion is required.';
+  if (!data.house_type) errors.house_type = 'House type is required.';
+  if (!data.house_ownership) errors.house_ownership = 'House ownership is required.';
+  if (!data.occupation) errors.occupation = 'Occupation is required.';
+  if (data.family_members_count === null) errors.family_members_count = 'Number of family members is required.';
+
   if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) errors.email = 'Enter a valid email address.';
   return errors;
 }
@@ -172,19 +189,54 @@ router.post('/', (req, res) => {
   const placeholders = columns.map((c) => `@${c}`).join(', ');
   const info = db
     .prepare(
-      `INSERT INTO surveys (${columns.join(', ')}, created_by, created_by_name)
-       VALUES (${placeholders}, @created_by, @created_by_name)`
+      `INSERT INTO surveys (${columns.join(', ')}, created_by, created_by_name, status)
+       VALUES (${placeholders}, @created_by, @created_by_name, @status)`
     )
-    .run({ ...data, created_by: req.user.id, created_by_name: req.user.name });
+    .run({ ...data, created_by: req.user.id, created_by_name: req.user.name, status: SURVEY_STATUS.FINAL });
 
   const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ data: survey });
 });
 
-// Only admin/developer may edit an existing record: once submitted, it is locked.
-router.put('/:id', requireRole('admin', 'developer'), (req, res) => {
+// Developer can always edit/delete. Everyone else may only touch their own
+// record, and only once a Request Approved edit request has unlocked it.
+function assertCanModify(survey, user) {
+  if (user.role === 'developer') return null;
+  if (survey.created_by !== user.id) {
+    return { status: 403, message: 'You can only modify household records you added yourself.' };
+  }
+  if (survey.status !== SURVEY_STATUS.REQUEST_APPROVED) {
+    return { status: 403, message: 'This record is locked. Submit an edit request and wait for developer approval.' };
+  }
+  return null;
+}
+
+// A record's owner may ask the developer to unlock it for editing.
+router.post('/:id/edit-request', (req, res) => {
+  const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
+  if (!survey) return res.status(404).json({ message: 'Survey record not found.' });
+  if (survey.created_by !== req.user.id) {
+    return res.status(403).json({ message: 'Only the record owner can request an edit.' });
+  }
+  if (survey.status !== SURVEY_STATUS.FINAL) {
+    return res.status(400).json({ message: 'An edit request is already in progress for this record.' });
+  }
+
+  db.prepare('INSERT INTO edit_requests (survey_id, requested_by, status) VALUES (?, ?, ?)').run(
+    survey.id,
+    req.user.id,
+    EDIT_REQUEST_STATUS.PENDING
+  );
+  db.prepare('UPDATE surveys SET status = ? WHERE id = ?').run(SURVEY_STATUS.EDIT_REQUESTED, survey.id);
+  res.status(201).json({ message: 'Edit request submitted for developer approval.' });
+});
+
+router.put('/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
+
+  const denial = assertCanModify(existing, req.user);
+  if (denial) return res.status(denial.status).json({ message: denial.message });
 
   const data = normalizePayload(req.body);
   const errors = validate(data);
@@ -192,18 +244,24 @@ router.put('/:id', requireRole('admin', 'developer'), (req, res) => {
 
   const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];
   const setClause = columns.map((c) => `${c} = @${c}`).join(', ');
+  // A non-developer editing their own Request Approved record completes the
+  // ticket cycle: the record locks again until another edit request is raised.
+  const nextStatus = req.user.role === 'developer' ? existing.status : SURVEY_STATUS.FINAL;
   db.prepare(
-    `UPDATE surveys SET ${setClause}, updated_by = @updated_by, updated_at = datetime('now') WHERE id = @id`
-  ).run({ ...data, updated_by: req.user.id, id: req.params.id });
+    `UPDATE surveys SET ${setClause}, updated_by = @updated_by, updated_at = datetime('now'), status = @status WHERE id = @id`
+  ).run({ ...data, updated_by: req.user.id, status: nextStatus, id: req.params.id });
 
   const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
   res.json({ data: survey });
 });
 
-// Only admin/developer may delete a record.
-router.delete('/:id', requireRole('admin', 'developer'), (req, res) => {
+router.delete('/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
+
+  const denial = assertCanModify(existing, req.user);
+  if (denial) return res.status(denial.status).json({ message: denial.message });
+
   db.prepare('DELETE FROM surveys WHERE id = ?').run(req.params.id);
   res.json({ message: 'Survey record deleted.' });
 });

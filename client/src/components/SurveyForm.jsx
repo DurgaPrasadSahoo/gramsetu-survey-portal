@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import {
-  STATES, ODISHA_DISTRICTS, BHUBANESWAR_LOCALITIES, CATEGORIES, RELIGIONS, RATION_CARD_TYPES,
-  HOUSE_TYPES, HOUSE_OWNERSHIP, OCCUPATIONS, ASSET_FIELDS, CENTRAL_SCHEMES, ODISHA_SCHEMES,
+  ODISHA_DISTRICTS, getPanchayatsForDistrict, BHUBANESWAR_LOCALITIES, CATEGORIES, RELIGIONS,
+  RATION_CARD_TYPES, HOUSE_TYPES, HOUSE_OWNERSHIP, OCCUPATIONS, ASSET_FIELDS, CENTRAL_SCHEMES, ODISHA_SCHEMES,
 } from '../constants/surveyOptions';
 
 export const EMPTY_SURVEY = {
   full_name: '', guardian_name: '', gender: '', dob: '', aadhaar_number: '',
-  mobile_number: '', email: '', state: 'Odisha', district: 'Khordha', block: '', village_town: '',
+  mobile_number: '', email: '', state: 'Odisha', district: 'Khordha', panchayat: '', village_town: '',
   address: '', pincode: '', category: '', religion: '', ration_card_type: '',
   house_type: '', house_ownership: '', family_members_count: '', monthly_income: '',
   occupation: '', land_owned_acres: '', bank_name: '', bank_account_number: '',
@@ -39,6 +39,17 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
     update(name, type === 'checkbox' ? checked : value);
   };
 
+  const panchayatOptions = getPanchayatsForDistrict(values.district);
+
+  const handleDistrictChange = (district) => {
+    setValues((prev) => ({
+      ...prev,
+      district,
+      // The previously selected panchayat may not exist in the new district's list.
+      panchayat: getPanchayatsForDistrict(district).includes(prev.panchayat) ? prev.panchayat : '',
+    }));
+  };
+
   const selectedSchemes = values.govt_scheme_availed
     ? values.govt_scheme_availed.split(', ').filter(Boolean)
     : [];
@@ -68,19 +79,19 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
             <Field label="Father's / Husband's Name" error={errors.guardian_name}>
               <input name="guardian_name" value={values.guardian_name} onChange={handleChange} />
             </Field>
-            <Field label="Gender" error={errors.gender}>
-              <select name="gender" value={values.gender} onChange={handleChange}>
+            <Field label="Gender" required error={errors.gender}>
+              <select name="gender" value={values.gender} onChange={handleChange} required>
                 <option value="">Select</option>
                 <option>Male</option>
                 <option>Female</option>
                 <option>Other</option>
               </select>
             </Field>
-            <Field label="Date of Birth" error={errors.dob}>
-              <input type="date" name="dob" value={values.dob || ''} onChange={handleChange} />
+            <Field label="Date of Birth" required error={errors.dob}>
+              <input type="date" name="dob" value={values.dob || ''} onChange={handleChange} required />
             </Field>
-            <Field label="Aadhaar Number" error={errors.aadhaar_number}>
-              <input name="aadhaar_number" value={values.aadhaar_number} onChange={handleChange} maxLength={12} placeholder="12-digit UID" />
+            <Field label="Aadhaar Number" required error={errors.aadhaar_number}>
+              <input name="aadhaar_number" value={values.aadhaar_number} onChange={handleChange} maxLength={12} placeholder="12-digit UID" required />
             </Field>
             <Field label="Mobile Number" required error={errors.mobile_number}>
               <input name="mobile_number" value={values.mobile_number} onChange={handleChange} maxLength={10} required placeholder="10-digit mobile" />
@@ -94,29 +105,29 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
         <section className="form-section">
           <h3>Address Details</h3>
           <div className="form-grid">
-            <Field label="State" error={errors.state}>
-              <select name="state" value={values.state} onChange={handleChange}>
-                <option value="">Select State</option>
-                {STATES.map((s) => <option key={s}>{s}</option>)}
+            <Field label="State">
+              <input value="Odisha" disabled />
+            </Field>
+            <Field label="District" required error={errors.district}>
+              <select name="district" value={values.district} onChange={(e) => handleDistrictChange(e.target.value)} required>
+                <option value="">Select District</option>
+                {ODISHA_DISTRICTS.map((d) => <option key={d}>{d}</option>)}
               </select>
             </Field>
-            <Field label="District" error={errors.district}>
-              <input name="district" value={values.district} onChange={handleChange} list="odisha-districts" placeholder="e.g. Khordha" />
-              <datalist id="odisha-districts">
-                {ODISHA_DISTRICTS.map((d) => <option key={d} value={d} />)}
-              </datalist>
+            <Field label="Panchayat" required error={errors.panchayat}>
+              <select name="panchayat" value={values.panchayat} onChange={handleChange} required disabled={!values.district}>
+                <option value="">{values.district ? 'Select Panchayat' : 'Select a district first'}</option>
+                {panchayatOptions.map((p) => <option key={p}>{p}</option>)}
+              </select>
             </Field>
-            <Field label="Block / Tehsil / Ward No. (BMC area)" error={errors.block}>
-              <input name="block" value={values.block} onChange={handleChange} placeholder="e.g. Bhubaneswar Block or Ward 12" />
-            </Field>
-            <Field label="City / Town / Village" error={errors.village_town}>
-              <input name="village_town" value={values.village_town} onChange={handleChange} list="bhubaneswar-localities" placeholder="e.g. Bhubaneswar - Patia" />
+            <Field label="Village" required error={errors.village_town}>
+              <input name="village_town" value={values.village_town} onChange={handleChange} list="bhubaneswar-localities" placeholder="e.g. Patia" required />
               <datalist id="bhubaneswar-localities">
                 {BHUBANESWAR_LOCALITIES.map((l) => <option key={l} value={l} />)}
               </datalist>
             </Field>
-            <Field label="Pincode" error={errors.pincode}>
-              <input name="pincode" value={values.pincode} onChange={handleChange} maxLength={6} placeholder="e.g. 751001" />
+            <Field label="Pincode" required error={errors.pincode}>
+              <input name="pincode" value={values.pincode} onChange={handleChange} maxLength={6} placeholder="e.g. 751001" required />
             </Field>
             <Field label="Full Address" error={errors.address}>
               <textarea name="address" value={values.address} onChange={handleChange} rows={2} placeholder="House no., street, locality/colony" />
@@ -127,14 +138,14 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
         <section className="form-section">
           <h3>Socio-Economic Details</h3>
           <div className="form-grid">
-            <Field label="Category" error={errors.category}>
-              <select name="category" value={values.category} onChange={handleChange}>
+            <Field label="Category" required error={errors.category}>
+              <select name="category" value={values.category} onChange={handleChange} required>
                 <option value="">Select</option>
                 {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </Field>
-            <Field label="Religion" error={errors.religion}>
-              <select name="religion" value={values.religion} onChange={handleChange}>
+            <Field label="Religion" required error={errors.religion}>
+              <select name="religion" value={values.religion} onChange={handleChange} required>
                 <option value="">Select</option>
                 {RELIGIONS.map((r) => <option key={r}>{r}</option>)}
               </select>
@@ -145,26 +156,26 @@ export default function SurveyForm({ initialValues = EMPTY_SURVEY, onSubmit, sub
                 {RATION_CARD_TYPES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
             </Field>
-            <Field label="House Type" error={errors.house_type}>
-              <select name="house_type" value={values.house_type} onChange={handleChange}>
+            <Field label="House Type" required error={errors.house_type}>
+              <select name="house_type" value={values.house_type} onChange={handleChange} required>
                 <option value="">Select</option>
                 {HOUSE_TYPES.map((h) => <option key={h}>{h}</option>)}
               </select>
             </Field>
-            <Field label="House Ownership" error={errors.house_ownership}>
-              <select name="house_ownership" value={values.house_ownership} onChange={handleChange}>
+            <Field label="House Ownership" required error={errors.house_ownership}>
+              <select name="house_ownership" value={values.house_ownership} onChange={handleChange} required>
                 <option value="">Select</option>
                 {HOUSE_OWNERSHIP.map((h) => <option key={h}>{h}</option>)}
               </select>
             </Field>
-            <Field label="Occupation" error={errors.occupation}>
-              <select name="occupation" value={values.occupation} onChange={handleChange}>
+            <Field label="Occupation" required error={errors.occupation}>
+              <select name="occupation" value={values.occupation} onChange={handleChange} required>
                 <option value="">Select</option>
                 {OCCUPATIONS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </Field>
-            <Field label="Number of Family Members" error={errors.family_members_count}>
-              <input type="number" min="0" name="family_members_count" value={values.family_members_count} onChange={handleChange} />
+            <Field label="Number of Family Members" required error={errors.family_members_count}>
+              <input type="number" min="0" name="family_members_count" value={values.family_members_count} onChange={handleChange} required />
             </Field>
             <Field label="Monthly Household Income (₹)" error={errors.monthly_income}>
               <input type="number" min="0" name="monthly_income" value={values.monthly_income} onChange={handleChange} />

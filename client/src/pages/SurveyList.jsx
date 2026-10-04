@@ -4,25 +4,29 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Pagination from '../components/Pagination';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { CATEGORIES, RATION_CARD_TYPES } from '../constants/surveyOptions';
+import { CATEGORIES } from '../constants/surveyOptions';
+import { STATUS_BADGE_CLASS } from '../constants/surveyStatus';
+import { getSurveyPermissions } from '../utils/surveyPermissions';
+
+const PAGE_SIZE = 10;
 
 export default function SurveyList() {
-  const { canManageSurveys } = useAuth();
+  const { user } = useAuth();
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
-  const [rationCardType, setRationCardType] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [requestingId, setRequestingId] = useState(null);
 
   const loadData = () => {
     setLoading(true);
     api
-      .get('/surveys', { params: { search, category, rationCardType, page, pageSize: 10 } })
+      .get('/surveys', { params: { search, category, page, pageSize: PAGE_SIZE } })
       .then(({ data }) => {
         setRows(data.data);
         setTotal(data.total);
@@ -54,6 +58,19 @@ export default function SurveyList() {
     }
   };
 
+  const handleEditRequest = async (row) => {
+    setRequestingId(row.id);
+    setError('');
+    try {
+      await api.post(`/surveys/${row.id}/edit-request`);
+      loadData();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to submit an edit request for this record.');
+    } finally {
+      setRequestingId(null);
+    }
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -75,10 +92,6 @@ export default function SurveyList() {
           <option value="">All Categories</option>
           {CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.value}</option>)}
         </select>
-        <select value={rationCardType} onChange={(e) => { setRationCardType(e.target.value); }}>
-          <option value="">All Ration Card Types</option>
-          {RATION_CARD_TYPES.map((r) => <option key={r.value} value={r.value}>{r.value}</option>)}
-        </select>
         <button className="btn btn-outline" type="submit">Apply Filters</button>
       </form>
 
@@ -89,39 +102,49 @@ export default function SurveyList() {
       ) : rows.length === 0 ? (
         <div className="empty-state">No household records found. Try adjusting your search or filters.</div>
       ) : (
-        <div className="record-table">
+        <div className="record-table record-table--surveys">
           <div className="record-table-head">
+            <span>SL No.</span>
             <span>Name</span>
             <span>Mobile</span>
-            <span>District</span>
-            <span>Category</span>
-            <span>Ration Card</span>
+            <span>Aadhaar Number</span>
             <span>Added By</span>
+            <span>Status</span>
             <span>Actions</span>
           </div>
-          {rows.map((row) => (
-            <div className="record-row" key={row.id}>
-              <span data-label="Name">{row.full_name}</span>
-              <span data-label="Mobile">{row.mobile_number}</span>
-              <span data-label="District">{row.district || '—'}</span>
-              <span data-label="Category">{row.category || '—'}</span>
-              <span data-label="Ration Card">
-                <span className={`badge badge-${(row.ration_card_type || 'none').toLowerCase()}`}>
-                  {row.ration_card_type || 'N/A'}
+          {rows.map((row, index) => {
+            const perms = getSurveyPermissions(row, user);
+            return (
+              <div className="record-row" key={row.id}>
+                <span data-label="SL No.">{(page - 1) * PAGE_SIZE + index + 1}</span>
+                <span data-label="Name">{row.full_name}</span>
+                <span data-label="Mobile">{row.mobile_number}</span>
+                <span data-label="Aadhaar Number">{row.aadhaar_number || '—'}</span>
+                <span data-label="Added By">{row.created_by_name}</span>
+                <span data-label="Status">
+                  <span className={`badge ${STATUS_BADGE_CLASS[row.status] || ''}`}>{row.status}</span>
                 </span>
-              </span>
-              <span data-label="Added By">{row.created_by_name}</span>
-              <span data-label="Actions" className="record-actions">
-                <Link to={`/surveys/${row.id}`} className="btn btn-outline btn-sm">View</Link>
-                {canManageSurveys && (
-                  <>
+                <span data-label="Actions" className="record-actions">
+                  <Link to={`/surveys/${row.id}`} className="btn btn-outline btn-sm">View</Link>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    disabled={!perms.canRequestEdit || requestingId === row.id}
+                    onClick={() => handleEditRequest(row)}
+                  >
+                    {requestingId === row.id ? 'Requesting…' : 'Edit Request'}
+                  </button>
+                  {perms.canEdit ? (
                     <Link to={`/surveys/${row.id}/edit`} className="btn btn-outline btn-sm">Edit</Link>
-                    <button className="btn btn-danger btn-sm" onClick={() => setDeleteTarget(row)}>Delete</button>
-                  </>
-                )}
-              </span>
-            </div>
-          ))}
+                  ) : (
+                    <button className="btn btn-outline btn-sm" disabled>Edit</button>
+                  )}
+                  <button className="btn btn-danger btn-sm" disabled={!perms.canDelete} onClick={() => setDeleteTarget(row)}>
+                    Delete
+                  </button>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 

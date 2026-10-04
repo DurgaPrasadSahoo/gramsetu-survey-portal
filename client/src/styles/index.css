@@ -311,6 +311,11 @@ h1, h2, h3 {
 .record-row { border-top: 1px solid var(--border); font-size: 0.9rem; }
 .record-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 
+.record-table--surveys .record-table-head,
+.record-table--surveys .record-row {
+  grid-template-columns: 0.5fr 1.3fr 1fr 1.1fr 1.1fr 1fr 2.2fr;
+}
+
 .badge {
   display: inline-block;
   padding: 0.15rem 0.55rem;
@@ -333,6 +338,10 @@ h1, h2, h3 {
 .badge-developer { background: #6d28d9; color: #fff; }
 .badge-head-of-district { background: var(--navy); color: #fff; }
 .badge-head-of-panchayat { background: #0f766e; color: #fff; }
+
+.badge-status-final { background: #dcfce7; color: #166534; }
+.badge-status-edit-requested { background: #fde9d0; color: #8a4a06; }
+.badge-status-request-approved { background: #e0e7ff; color: #3730a3; }
 
 .pagination {
   display: flex;
@@ -371,6 +380,14 @@ h1, h2, h3 {
 .form-field input:focus, .form-field select:focus, .form-field textarea:focus {
   outline: 2px solid var(--navy);
   outline-offset: 1px;
+}
+.form-field input[type="number"] {
+  -moz-appearance: textfield;
+}
+.form-field input[type="number"]::-webkit-outer-spin-button,
+.form-field input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .field-error { color: var(--danger); font-size: 0.78rem; }
 

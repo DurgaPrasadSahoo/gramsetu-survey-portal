@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { to: '/surveys/new', label: 'New Survey Entry', icon: '📝', roles: ALL_ROLES },
   { to: '/schemes', label: 'Govt Schemes', icon: '📜', roles: ALL_ROLES },
   { to: '/team', label: 'Team Directory', icon: '🧑‍💼', roles: MANAGER_ROLES },
+  { to: '/edit-requests', label: 'Edit Requests', icon: '🔓', roles: ['developer'] },
   { to: '/register', label: 'Register New User', icon: '➕', roles: ['developer'] },
   { to: '/profile', label: 'My Profile', icon: '👤', roles: ALL_ROLES },
 ];

@@ -83,6 +83,7 @@ db.exec(`
     state TEXT,
     district TEXT,
     block TEXT,
+    panchayat TEXT,
     village_town TEXT,
     address TEXT,
     pincode TEXT,
@@ -114,11 +115,36 @@ db.exec(`
     created_by_name TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_by INTEGER REFERENCES users(id),
-    updated_at TEXT
+    updated_at TEXT,
+    status TEXT NOT NULL DEFAULT 'Final'
   );
 
   CREATE INDEX IF NOT EXISTS idx_surveys_created_by ON surveys(created_by);
   CREATE INDEX IF NOT EXISTS idx_surveys_full_name ON surveys(full_name);
+
+  -- One row per edit request a record's owner raises; a developer approves or
+  -- declines it, which is what actually unlocks (or re-locks) the survey record.
+  CREATE TABLE IF NOT EXISTS edit_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    survey_id INTEGER NOT NULL REFERENCES surveys(id),
+    requested_by INTEGER NOT NULL REFERENCES users(id),
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    decided_by INTEGER REFERENCES users(id),
+    decided_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_edit_requests_survey_id ON edit_requests(survey_id);
+  CREATE INDEX IF NOT EXISTS idx_edit_requests_status ON edit_requests(status);
 `);
+
+// Older installs predate the status/Panchayat columns.
+const surveyColumns = db.prepare('PRAGMA table_info(surveys)').all().map((c) => c.name);
+if (!surveyColumns.includes('status')) {
+  db.exec("ALTER TABLE surveys ADD COLUMN status TEXT NOT NULL DEFAULT 'Final'");
+}
+if (!surveyColumns.includes('panchayat')) {
+  db.exec('ALTER TABLE surveys ADD COLUMN panchayat TEXT');
+}
 
 module.exports = db;

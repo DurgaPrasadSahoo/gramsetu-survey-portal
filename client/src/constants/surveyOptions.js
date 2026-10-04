@@ -1,9 +1,3 @@
-export const STATES = [
-  'Odisha', 'Andhra Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Gujarat', 'Haryana',
-  'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Punjab', 'Rajasthan',
-  'Tamil Nadu', 'Telangana', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Delhi',
-];
-
 // All 30 districts of Odisha. Khordha (which contains Bhubaneswar) is the default
 // since this survey drive is focused on Bhubaneswar households.
 export const ODISHA_DISTRICTS = [
@@ -12,6 +6,16 @@ export const ODISHA_DISTRICTS = [
   'Kandhamal', 'Kendrapara', 'Kendujhar', 'Khordha', 'Koraput', 'Malkangiri', 'Mayurbhanj',
   'Nabarangpur', 'Nayagarh', 'Nuapada', 'Puri', 'Rayagada', 'Sambalpur', 'Subarnapur', 'Sundargarh',
 ];
+
+// Every Gram Panchayat in Odisha, keyed by district — sourced from the Ministry of
+// Panchayati Raj's Local Government Directory (lgdirectory.gov.in). Regenerate via
+// scripts/generate-panchayats.js if the upstream LGD export changes.
+import PANCHAYATS_BY_DISTRICT from './panchayatsByDistrict.json';
+export { PANCHAYATS_BY_DISTRICT };
+
+export function getPanchayatsForDistrict(district) {
+  return PANCHAYATS_BY_DISTRICT[district] || [];
+}
 
 // Common Bhubaneswar localities / wards, offered as suggestions on top of free entry.
 export const BHUBANESWAR_LOCALITIES = [

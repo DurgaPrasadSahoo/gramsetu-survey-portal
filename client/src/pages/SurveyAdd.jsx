@@ -33,8 +33,8 @@ export default function SurveyAdd() {
         <div>
           <h1>New Household Survey Entry</h1>
           <p className="page-subtitle">
-            Fill in the household details accurately. Once submitted, this entry cannot be edited by you —
-            only a portal administrator can make corrections.
+            Fill in the household details accurately. Once submitted, this entry is locked — use "Edit Request"
+            from Household Records to ask the developer to unlock it for corrections.
           </p>
         </div>
       </div>

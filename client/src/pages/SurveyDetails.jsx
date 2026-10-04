@@ -4,22 +4,33 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import SurveyForm from '../components/SurveyForm';
 import ConfirmDialog from '../components/ConfirmDialog';
+import { STATUS_BADGE_CLASS, SURVEY_STATUS } from '../constants/surveyStatus';
+import { getSurveyPermissions } from '../utils/surveyPermissions';
+
+const STATUS_MESSAGES = {
+  [SURVEY_STATUS.FINAL]: 'This record is locked. Submit an edit request to ask the developer to unlock it for corrections.',
+  [SURVEY_STATUS.EDIT_REQUESTED]: 'An edit request for this record is awaiting developer approval.',
+  [SURVEY_STATUS.REQUEST_APPROVED]: 'Your edit request was approved — you can now edit or delete this record.',
+};
 
 export default function SurveyDetails() {
   const { id } = useParams();
-  const { canManageSurveys } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [survey, setSurvey] = useState(null);
   const [error, setError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [requesting, setRequesting] = useState(false);
 
-  useEffect(() => {
+  const loadSurvey = () => {
     api
       .get(`/surveys/${id}`)
       .then(({ data }) => setSurvey(data.data))
       .catch(() => setError('This household record could not be found.'));
-  }, [id]);
+  };
+
+  useEffect(loadSurvey, [id]);
 
   const handleDelete = async () => {
     try {
@@ -31,8 +42,23 @@ export default function SurveyDetails() {
     }
   };
 
-  if (error) return <div className="alert alert-error">{error}</div>;
+  const handleEditRequest = async () => {
+    setRequesting(true);
+    setError('');
+    try {
+      await api.post(`/surveys/${id}/edit-request`);
+      loadSurvey();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Unable to submit an edit request for this record.');
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  if (error && !survey) return <div className="alert alert-error">{error}</div>;
   if (!survey) return <div className="page-loader">Loading record…</div>;
+
+  const perms = getSurveyPermissions(survey, user);
 
   return (
     <div>
@@ -47,23 +73,27 @@ export default function SurveyDetails() {
         </div>
         <div className="page-header-actions">
           <Link to="/surveys" className="btn btn-outline">← Back to List</Link>
-          {canManageSurveys && (
-            <>
-              <Link to={`/surveys/${id}/edit`} className="btn btn-primary">Edit Record</Link>
-              <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>Delete</button>
-            </>
+          <button className="btn btn-outline" disabled={!perms.canRequestEdit || requesting} onClick={handleEditRequest}>
+            {requesting ? 'Requesting…' : 'Edit Request'}
+          </button>
+          {perms.canEdit ? (
+            <Link to={`/surveys/${id}/edit`} className="btn btn-primary">Edit Record</Link>
+          ) : (
+            <button className="btn btn-primary" disabled>Edit Record</button>
           )}
+          <button className="btn btn-danger" disabled={!perms.canDelete} onClick={() => setConfirmDelete(true)}>Delete</button>
         </div>
       </div>
 
       {location.state?.justCreated && (
         <div className="alert alert-success">Survey record submitted successfully.</div>
       )}
-      {!canManageSurveys && (
-        <div className="alert alert-info">
-          This record is locked. Only an administrator can edit or delete household records once submitted.
-        </div>
-      )}
+      {error && <div className="alert alert-error">{error}</div>}
+
+      <div className="panel" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+        <span className={`badge ${STATUS_BADGE_CLASS[survey.status] || ''}`}>{survey.status}</span>
+        {user.role !== 'developer' && <span className="muted">{STATUS_MESSAGES[survey.status]}</span>}
+      </div>
 
       <div className="panel">
         <SurveyForm initialValues={survey} readOnly />

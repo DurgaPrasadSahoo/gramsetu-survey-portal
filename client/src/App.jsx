@@ -10,6 +10,7 @@ import SurveyList from './pages/SurveyList';
 import SurveyAdd from './pages/SurveyAdd';
 import SurveyDetails from './pages/SurveyDetails';
 import SurveyEdit from './pages/SurveyEdit';
+import EditRequests from './pages/EditRequests';
 import Team from './pages/Team';
 import Profile from './pages/Profile';
 import SchemesInfo from './pages/SchemesInfo';
@@ -28,20 +29,22 @@ export default function App() {
           <Route path="/surveys" element={<SurveyList />} />
           <Route path="/surveys/new" element={<SurveyAdd />} />
           <Route path="/surveys/:id" element={<SurveyDetails />} />
+          {/* Who may actually edit a given record depends on its status and ownership
+              (see getSurveyPermissions) rather than role, so this route itself is open
+              to anyone authenticated — the server re-checks and 403s if not allowed. */}
+          <Route path="/surveys/:id/edit" element={<SurveyEdit />} />
           <Route path="/schemes" element={<SchemesInfo />} />
           <Route path="/profile" element={<Profile />} />
-
-          <Route element={<ProtectedRoute roles={['admin', 'developer']} />}>
-            <Route path="/surveys/:id/edit" element={<SurveyEdit />} />
-          </Route>
 
           <Route element={<ProtectedRoute roles={['developer', 'admin', 'head_of_district', 'head_of_panchayat']} />}>
             <Route path="/team" element={<Team />} />
           </Route>
 
-          {/* Registering new accounts (any role, including field agents) is a developer-only action. */}
+          {/* Registering new accounts (any role, including field agents) and deciding
+              edit requests are both developer-only actions. */}
           <Route element={<ProtectedRoute roles={['developer']} />}>
             <Route path="/register" element={<Register />} />
+            <Route path="/edit-requests" element={<EditRequests />} />
           </Route>
         </Route>
       </Route>

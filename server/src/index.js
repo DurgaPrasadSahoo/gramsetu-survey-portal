@@ -10,6 +10,7 @@ require('./db/seed'); // idempotent: re-seeds demo accounts if the DB was reset
 const authRoutes = require('./routes/auth');
 const surveyRoutes = require('./routes/surveys');
 const userRoutes = require('./routes/users');
+const editRequestRoutes = require('./routes/editRequests');
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', service: 'gramsetu
 app.use('/api/auth', authRoutes);
 app.use('/api/surveys', surveyRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/edit-requests', editRequestRoutes);
 
 // In production, this same service also serves the built React app so the
 // whole portal runs as a single free web service (no separate frontend host,

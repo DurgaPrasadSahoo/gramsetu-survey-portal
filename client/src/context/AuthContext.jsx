@@ -53,8 +53,6 @@ export function AuthProvider({ children }) {
       isHeadOfDistrict: user?.role === 'head_of_district',
       isHeadOfPanchayat: user?.role === 'head_of_panchayat',
       isFieldAgent: user?.role === 'field_agent',
-      // Admin/developer may edit or delete survey records; everyone can add them.
-      canManageSurveys: user?.role === 'admin' || user?.role === 'developer',
       // Every role above field agent can see a team directory of who reports to them.
       canManageTeam: !!user && user.role !== 'field_agent',
     }),
