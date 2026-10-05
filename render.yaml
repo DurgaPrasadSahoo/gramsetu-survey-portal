@@ -12,3 +12,12 @@ services:
         value: 8h
       - key: DB_PATH
         value: ./data/gramsetu.db
+      # Points the server at a free Turso (libSQL) cloud database instead of a
+      # local file, so data survives restarts/redeploys on this service's
+      # ephemeral free-tier filesystem. Set manually (not synced from this
+      # file, and not committed) — see README "Database" section for how to
+      # provision one. Falls back to the local SQLite file above if unset.
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

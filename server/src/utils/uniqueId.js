@@ -32,13 +32,13 @@ function buildSurveyId(district, panchayat, village) {
   return `#SE-${STATE_CODE}-${districtCode(district)}-${placeCode(panchayat)}-${placeCode(village)}-${randomSuffix()}`;
 }
 
-// Retries id generation until `exists(id)` (a DB lookup) comes back empty.
-// Collisions are vanishingly unlikely (36^4 combinations per bucket) but are
-// cheap to guard against outright.
-function generateUniqueId(build, exists) {
+// Retries id generation until `exists(id)` (an async DB lookup) comes back
+// empty. Collisions are vanishingly unlikely (36^4 combinations per bucket)
+// but are cheap to guard against outright.
+async function generateUniqueId(build, exists) {
   for (let attempt = 0; attempt < 10; attempt++) {
     const id = build();
-    if (!exists(id)) return id;
+    if (!(await exists(id))) return id;
   }
   throw new Error('Could not generate a unique id after multiple attempts.');
 }

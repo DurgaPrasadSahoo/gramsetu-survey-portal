@@ -1,6 +1,7 @@
 const express = require('express');
-const db = require('../db/connection');
+const { db } = require('../db/connection');
 const { authenticate } = require('../middleware/auth');
+const asyncHandler = require('../middleware/asyncHandler');
 const { getVisibleUserIds } = require('../utils/hierarchy');
 const { SURVEY_STATUS, EDIT_REQUEST_STATUS } = require('../constants/surveyStatus');
 const { buildSurveyId, generateUniqueId } = require('../utils/uniqueId');
@@ -10,8 +11,8 @@ router.use(authenticate);
 
 // Appends a `created_by IN (...)` clause scoping results to what `user` may see,
 // per the reporting hierarchy. Returns null when there is no restriction (admin/developer).
-function addVisibilityClause(clauses, params, user) {
-  const visibleIds = getVisibleUserIds(user);
+async function addVisibilityClause(clauses, params, user) {
+  const visibleIds = await getVisibleUserIds(user);
   if (!visibleIds) return null;
   const placeholders = visibleIds.map((id, i) => {
     params[`visible${i}`] = id;
@@ -89,16 +90,22 @@ function normalizePayload(body) {
 
 // Any other survey record already using this mobile/Aadhaar number. `excludeId`
 // leaves the record itself out of the check when updating.
-function findDuplicateErrors(data, excludeId) {
+async function findDuplicateErrors(data, excludeId) {
   const errors = {};
   const selfId = excludeId ?? -1;
 
-  const mobileDupe = db.prepare('SELECT id FROM surveys WHERE mobile_number = ? AND id != ?').get(data.mobile_number, selfId);
-  if (mobileDupe) errors.mobile_number = 'Another household record already uses this mobile number.';
+  const mobileDupe = await db.execute({
+    sql: 'SELECT id FROM surveys WHERE mobile_number = @mobile AND id != @selfId',
+    args: { mobile: data.mobile_number, selfId },
+  });
+  if (mobileDupe.rows[0]) errors.mobile_number = 'Another household record already uses this mobile number.';
 
   if (data.aadhaar_number) {
-    const aadhaarDupe = db.prepare('SELECT id FROM surveys WHERE aadhaar_number = ? AND id != ?').get(data.aadhaar_number, selfId);
-    if (aadhaarDupe) errors.aadhaar_number = 'Another household record already uses this Aadhaar number.';
+    const aadhaarDupe = await db.execute({
+      sql: 'SELECT id FROM surveys WHERE aadhaar_number = @aadhaar AND id != @selfId',
+      args: { aadhaar: data.aadhaar_number, selfId },
+    });
+    if (aadhaarDupe.rows[0]) errors.aadhaar_number = 'Another household record already uses this Aadhaar number.';
   }
 
   return errors;
@@ -134,101 +141,131 @@ function validate(data) {
 }
 
 // List + search + filter + pagination. Scoped to what the requester's hierarchy allows.
-router.get('/', (req, res) => {
-  const { search = '', category, rationCardType, district, page = 1, pageSize = 10 } = req.query;
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { search = '', category, rationCardType, district, page = 1, pageSize = 10 } = req.query;
 
-  const clauses = [];
-  const params = {};
+    const clauses = [];
+    const params = {};
 
-  if (search) {
-    clauses.push('(full_name LIKE @search OR mobile_number LIKE @search OR aadhaar_number LIKE @search)');
-    params.search = `%${search}%`;
-  }
-  if (category) {
-    clauses.push('category = @category');
-    params.category = category;
-  }
-  if (rationCardType) {
-    clauses.push('ration_card_type = @rationCardType');
-    params.rationCardType = rationCardType;
-  }
-  if (district) {
-    clauses.push('district = @district');
-    params.district = district;
-  }
+    if (search) {
+      clauses.push('(full_name LIKE @search OR mobile_number LIKE @search OR aadhaar_number LIKE @search)');
+      params.search = `%${search}%`;
+    }
+    if (category) {
+      clauses.push('category = @category');
+      params.category = category;
+    }
+    if (rationCardType) {
+      clauses.push('ration_card_type = @rationCardType');
+      params.rationCardType = rationCardType;
+    }
+    if (district) {
+      clauses.push('district = @district');
+      params.district = district;
+    }
 
-  addVisibilityClause(clauses, params, req.user);
+    await addVisibilityClause(clauses, params, req.user);
 
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-  const total = db.prepare(`SELECT COUNT(*) AS count FROM surveys ${where}`).get(params).count;
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const total = (await db.execute({ sql: `SELECT COUNT(*) AS count FROM surveys ${where}`, args: params })).rows[0].count;
 
-  const limit = Math.min(Math.max(Number(pageSize) || 10, 1), 100);
-  const currentPage = Math.max(Number(page) || 1, 1);
-  const offset = (currentPage - 1) * limit;
+    const limit = Math.min(Math.max(Number(pageSize) || 10, 1), 100);
+    const currentPage = Math.max(Number(page) || 1, 1);
+    const offset = (currentPage - 1) * limit;
 
-  const rows = db
-    .prepare(`SELECT * FROM surveys ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`)
-    .all({ ...params, limit, offset });
+    const rows = (
+      await db.execute({
+        sql: `SELECT * FROM surveys ${where} ORDER BY created_at DESC LIMIT @limit OFFSET @offset`,
+        args: { ...params, limit, offset },
+      })
+    ).rows;
 
-  res.json({ data: rows, total, page: currentPage, pageSize: limit, totalPages: Math.ceil(total / limit) || 1 });
-});
+    res.json({ data: rows, total, page: currentPage, pageSize: limit, totalPages: Math.ceil(total / limit) || 1 });
+  })
+);
 
-router.get('/stats/summary', (req, res) => {
-  const clauses = [];
-  const params = {};
-  addVisibilityClause(clauses, params, req.user);
-  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+router.get(
+  '/stats/summary',
+  asyncHandler(async (req, res) => {
+    const clauses = [];
+    const params = {};
+    await addVisibilityClause(clauses, params, req.user);
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
-  const total = db.prepare(`SELECT COUNT(*) AS c FROM surveys ${where}`).get(params).c;
-  const byCategory = db.prepare(`SELECT category, COUNT(*) AS c FROM surveys ${where} GROUP BY category`).all(params);
-  const byRationCard = db
-    .prepare(`SELECT ration_card_type, COUNT(*) AS c FROM surveys ${where} GROUP BY ration_card_type`)
-    .all(params);
-  const assetCols = BOOL_FIELDS.map((f) => `SUM(${f}) AS ${f}`).join(', ');
-  const assetOwnership = db.prepare(`SELECT ${assetCols} FROM surveys ${where}`).get(params);
-  const myCount =
-    req.user.role !== 'admin' && req.user.role !== 'developer'
-      ? db.prepare('SELECT COUNT(*) AS c FROM surveys WHERE created_by = ?').get(req.user.id).c
-      : null;
+    const total = (await db.execute({ sql: `SELECT COUNT(*) AS c FROM surveys ${where}`, args: params })).rows[0].c;
+    const byCategory = (
+      await db.execute({ sql: `SELECT category, COUNT(*) AS c FROM surveys ${where} GROUP BY category`, args: params })
+    ).rows;
+    const byRationCard = (
+      await db.execute({
+        sql: `SELECT ration_card_type, COUNT(*) AS c FROM surveys ${where} GROUP BY ration_card_type`,
+        args: params,
+      })
+    ).rows;
+    const assetCols = BOOL_FIELDS.map((f) => `SUM(${f}) AS ${f}`).join(', ');
+    const assetOwnership = (await db.execute({ sql: `SELECT ${assetCols} FROM surveys ${where}`, args: params })).rows[0];
+    const myCount =
+      req.user.role !== 'admin' && req.user.role !== 'developer'
+        ? (
+            await db.execute({
+              sql: 'SELECT COUNT(*) AS c FROM surveys WHERE created_by = @id',
+              args: { id: req.user.id },
+            })
+          ).rows[0].c
+        : null;
 
-  res.json({ total, byCategory, byRationCard, assetOwnership, myCount });
-});
+    res.json({ total, byCategory, byRationCard, assetOwnership, myCount });
+  })
+);
 
-router.get('/:id', (req, res) => {
-  const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
-  if (!survey) return res.status(404).json({ message: 'Survey record not found.' });
+router.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const result = await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: req.params.id } });
+    const survey = result.rows[0];
+    if (!survey) return res.status(404).json({ message: 'Survey record not found.' });
 
-  const visibleIds = getVisibleUserIds(req.user);
-  if (visibleIds && !visibleIds.includes(survey.created_by)) {
-    return res.status(403).json({ message: 'You do not have permission to view this record.' });
-  }
+    const visibleIds = await getVisibleUserIds(req.user);
+    if (visibleIds && !visibleIds.includes(survey.created_by)) {
+      return res.status(403).json({ message: 'You do not have permission to view this record.' });
+    }
 
-  res.json({ data: survey });
-});
+    res.json({ data: survey });
+  })
+);
 
 // Anyone authenticated can add new household records.
-router.post('/', (req, res) => {
-  const data = normalizePayload(req.body);
-  const errors = { ...validate(data), ...findDuplicateErrors(data) };
-  if (Object.keys(errors).length) return res.status(400).json({ errors });
+router.post(
+  '/',
+  asyncHandler(async (req, res) => {
+    const data = normalizePayload(req.body);
+    const errors = { ...validate(data), ...(await findDuplicateErrors(data)) };
+    if (Object.keys(errors).length) return res.status(400).json({ errors });
 
-  const uniqueId = generateUniqueId(
-    () => buildSurveyId(data.district, data.panchayat, data.village_town),
-    (candidate) => !!db.prepare('SELECT 1 FROM surveys WHERE unique_id = ?').get(candidate)
-  );
+    const uniqueId = await generateUniqueId(
+      () => buildSurveyId(data.district, data.panchayat, data.village_town),
+      async (candidate) => {
+        const result = await db.execute({ sql: 'SELECT 1 FROM surveys WHERE unique_id = @id', args: { id: candidate } });
+        return !!result.rows[0];
+      }
+    );
 
-  const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];
-  const placeholders = columns.map((c) => `@${c}`).join(', ');
-  const info = db
-    .prepare(
-      `INSERT INTO surveys (${columns.join(', ')}, created_by, created_by_name, status, unique_id)
-       VALUES (${placeholders}, @created_by, @created_by_name, @status, @unique_id)`
-    )
-    .run({ ...data, created_by: req.user.id, created_by_name: req.user.name, status: SURVEY_STATUS.FINAL, unique_id: uniqueId });
+    const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];
+    const placeholders = columns.map((c) => `@${c}`).join(', ');
+    const info = await db.execute({
+      sql: `INSERT INTO surveys (${columns.join(', ')}, created_by, created_by_name, status, unique_id)
+            VALUES (${placeholders}, @created_by, @created_by_name, @status, @unique_id)`,
+      args: { ...data, created_by: req.user.id, created_by_name: req.user.name, status: SURVEY_STATUS.FINAL, unique_id: uniqueId },
+    });
 
-  const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(info.lastInsertRowid);
-  res.status(201).json({ data: survey });
-});
+    const survey = (
+      await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: Number(info.lastInsertRowid) } })
+    ).rows[0];
+    res.status(201).json({ data: survey });
+  })
+);
 
 // Developer can always edit/delete. Everyone else may only touch their own
 // record, and only once a Request Approved edit request has unlocked it.
@@ -244,58 +281,76 @@ function assertCanModify(survey, user) {
 }
 
 // A record's owner may ask the developer to unlock it for editing.
-router.post('/:id/edit-request', (req, res) => {
-  const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
-  if (!survey) return res.status(404).json({ message: 'Survey record not found.' });
-  if (survey.created_by !== req.user.id) {
-    return res.status(403).json({ message: 'Only the record owner can request an edit.' });
-  }
-  if (survey.status !== SURVEY_STATUS.FINAL) {
-    return res.status(400).json({ message: 'An edit request is already in progress for this record.' });
-  }
+router.post(
+  '/:id/edit-request',
+  asyncHandler(async (req, res) => {
+    const result = await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: req.params.id } });
+    const survey = result.rows[0];
+    if (!survey) return res.status(404).json({ message: 'Survey record not found.' });
+    if (survey.created_by !== req.user.id) {
+      return res.status(403).json({ message: 'Only the record owner can request an edit.' });
+    }
+    if (survey.status !== SURVEY_STATUS.FINAL) {
+      return res.status(400).json({ message: 'An edit request is already in progress for this record.' });
+    }
 
-  db.prepare('INSERT INTO edit_requests (survey_id, requested_by, status) VALUES (?, ?, ?)').run(
-    survey.id,
-    req.user.id,
-    EDIT_REQUEST_STATUS.PENDING
-  );
-  db.prepare('UPDATE surveys SET status = ? WHERE id = ?').run(SURVEY_STATUS.EDIT_REQUESTED, survey.id);
-  res.status(201).json({ message: 'Edit request submitted for developer approval.' });
-});
+    await db.execute({
+      sql: 'INSERT INTO edit_requests (survey_id, requested_by, status) VALUES (@surveyId, @requestedBy, @status)',
+      args: { surveyId: survey.id, requestedBy: req.user.id, status: EDIT_REQUEST_STATUS.PENDING },
+    });
+    await db.execute({
+      sql: 'UPDATE surveys SET status = @status WHERE id = @id',
+      args: { status: SURVEY_STATUS.EDIT_REQUESTED, id: survey.id },
+    });
+    res.status(201).json({ message: 'Edit request submitted for developer approval.' });
+  })
+);
 
-router.put('/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
+router.put(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const existingResult = await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: req.params.id } });
+    const existing = existingResult.rows[0];
+    if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
 
-  const denial = assertCanModify(existing, req.user);
-  if (denial) return res.status(denial.status).json({ message: denial.message });
+    const denial = assertCanModify(existing, req.user);
+    if (denial) return res.status(denial.status).json({ message: denial.message });
 
-  const data = normalizePayload(req.body);
-  const errors = { ...validate(data), ...findDuplicateErrors(data, existing.id) };
-  if (Object.keys(errors).length) return res.status(400).json({ errors });
+    const data = normalizePayload(req.body);
+    const errors = { ...validate(data), ...(await findDuplicateErrors(data, existing.id)) };
+    if (Object.keys(errors).length) return res.status(400).json({ errors });
 
-  const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];
-  const setClause = columns.map((c) => `${c} = @${c}`).join(', ');
-  // A non-developer editing their own Request Approved record completes the
-  // ticket cycle: the record locks again until another edit request is raised.
-  const nextStatus = req.user.role === 'developer' ? existing.status : SURVEY_STATUS.FINAL;
-  db.prepare(
-    `UPDATE surveys SET ${setClause}, updated_by = @updated_by, updated_at = datetime('now'), status = @status WHERE id = @id`
-  ).run({ ...data, updated_by: req.user.id, status: nextStatus, id: req.params.id });
+    const columns = [...TEXT_FIELDS, ...NUMERIC_FIELDS, ...BOOL_FIELDS];
+    const setClause = columns.map((c) => `${c} = @${c}`).join(', ');
+    // A non-developer editing their own Request Approved record completes the
+    // ticket cycle: the record locks again until another edit request is raised.
+    const nextStatus = req.user.role === 'developer' ? existing.status : SURVEY_STATUS.FINAL;
+    await db.execute({
+      sql: `UPDATE surveys SET ${setClause}, updated_by = @updated_by, updated_at = datetime('now'), status = @status WHERE id = @id`,
+      args: { ...data, updated_by: req.user.id, status: nextStatus, id: req.params.id },
+    });
 
-  const survey = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
-  res.json({ data: survey });
-});
+    const survey = (await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: req.params.id } })).rows[0];
+    res.json({ data: survey });
+  })
+);
 
-router.delete('/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM surveys WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
+router.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const existingResult = await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: req.params.id } });
+    const existing = existingResult.rows[0];
+    if (!existing) return res.status(404).json({ message: 'Survey record not found.' });
 
-  const denial = assertCanModify(existing, req.user);
-  if (denial) return res.status(denial.status).json({ message: denial.message });
+    const denial = assertCanModify(existing, req.user);
+    if (denial) return res.status(denial.status).json({ message: denial.message });
 
-  db.prepare('DELETE FROM surveys WHERE id = ?').run(req.params.id);
-  res.json({ message: 'Survey record deleted.' });
-});
+    // A survey can have edit_requests rows pointing at it; delete those first
+    // or the FK constraint rejects deleting the survey itself.
+    await db.execute({ sql: 'DELETE FROM edit_requests WHERE survey_id = @id', args: { id: req.params.id } });
+    await db.execute({ sql: 'DELETE FROM surveys WHERE id = @id', args: { id: req.params.id } });
+    res.json({ message: 'Survey record deleted.' });
+  })
+);
 
 module.exports = router;

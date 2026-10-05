@@ -12,7 +12,9 @@ Corporation area).
 
 - **Frontend:** React 19 (Vite), React Router, Axios, plain responsive CSS
 - **Backend:** Node.js, Express, JWT auth, bcrypt password hashing
-- **Database:** SQLite (file-based, via `better-sqlite3`) — zero setup required
+- **Database:** SQLite, via [libSQL](https://turso.tech/libsql) (`@libsql/client`) — a local file with zero setup for
+  development, or a free [Turso](https://turso.tech) cloud database for persistent production hosting (see
+  "Database" below)
 
 ## Project structure
 
@@ -130,8 +132,30 @@ Availed" checklist cover:
 Edit `client/src/constants/surveyOptions.js` (`CENTRAL_SCHEMES` /
 `ODISHA_SCHEMES`) to add or update schemes.
 
-## Notes on the database
+## Database
 
-The SQLite file lives at `server/data/gramsetu.db` and is created
-automatically on first run. Delete it and re-run `npm run seed` to start
-fresh.
+Local development needs no setup: `server/src/db/connection.js` opens a local
+SQLite file at `server/data/gramsetu.db` (via libSQL's embedded mode) and
+creates it automatically on first run. Delete it and re-run `npm run seed` to
+start fresh.
+
+**Production (Render) uses a free [Turso](https://turso.tech) cloud database
+instead**, so data survives restarts/redeploys — Render's free web services
+have an ephemeral filesystem, meaning a local SQLite file there gets wiped on
+every restart, redeploy, or after 15 minutes of inactivity. Turso is
+SQLite-compatible (no query changes needed) and free forever on its base
+tier. To provision one:
+
+```bash
+curl -sSfL https://get.tur.so/install.sh | bash   # installs the turso CLI
+turso auth login                                   # one-time browser login
+turso db create <your-db-name>
+turso db show <your-db-name>        # note the libsql:// URL
+turso db tokens create <your-db-name>  # generates an auth token
+```
+
+Then set `TURSO_DATABASE_URL` (the `libsql://...` URL) and `TURSO_AUTH_TOKEN`
+as environment variables on the server (Render dashboard, or
+`render.yaml` + the Render CLI/API — see the comments there). With both set,
+`server/src/db/connection.js` connects to Turso instead of the local file;
+with neither set, it falls back to the local file exactly as before.

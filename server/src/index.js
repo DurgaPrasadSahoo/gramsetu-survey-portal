@@ -4,8 +4,8 @@ const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 
-require('./db/connection'); // ensures schema is created on boot
-require('./db/seed'); // idempotent: re-seeds demo accounts if the DB was reset
+const { migrate } = require('./db/connection');
+const seed = require('./db/seed');
 
 const authRoutes = require('./routes/auth');
 const surveyRoutes = require('./routes/surveys');
@@ -42,4 +42,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`GramSetu API listening on http://localhost:${PORT}`));
+
+async function start() {
+  await migrate(); // ensures schema is created/up to date before anything else
+  await seed(); // idempotent: re-seeds demo accounts if the DB was reset
+  app.listen(PORT, () => console.log(`GramSetu API listening on http://localhost:${PORT}`));
+}
+
+start().catch((err) => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
+});

@@ -1,6 +1,7 @@
 const express = require('express');
-const db = require('../db/connection');
+const { db } = require('../db/connection');
 const { authenticate, requireRole } = require('../middleware/auth');
+const asyncHandler = require('../middleware/asyncHandler');
 const { getVisibleUserIds, getAncestorChain, getDescendantIds } = require('../utils/hierarchy');
 const { MANAGER_ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
 
@@ -10,131 +11,158 @@ router.use(authenticate);
 // Team directory: every role above field agent can see the users beneath them
 // in the hierarchy (and only those users) with how many surveys each has
 // submitted. Admin/developer see everyone. Optionally filtered to one role.
-router.get('/', requireRole(...MANAGER_ROLES), (req, res) => {
-  const visibleIds = getVisibleUserIds(req.user);
-  const params = {};
-  const clauses = [];
+router.get(
+  '/',
+  requireRole(...MANAGER_ROLES),
+  asyncHandler(async (req, res) => {
+    const visibleIds = await getVisibleUserIds(req.user);
+    const params = {};
+    const clauses = [];
 
-  if (visibleIds) {
-    const subordinateIds = visibleIds.filter((id) => id !== req.user.id);
-    if (subordinateIds.length === 0) {
-      return res.json({ data: [] });
+    if (visibleIds) {
+      const subordinateIds = visibleIds.filter((id) => id !== req.user.id);
+      if (subordinateIds.length === 0) {
+        return res.json({ data: [] });
+      }
+      const placeholders = subordinateIds.map((id, i) => {
+        params[`id${i}`] = id;
+        return `@id${i}`;
+      });
+      clauses.push(`u.id IN (${placeholders.join(', ')})`);
+    } else {
+      params.selfId = req.user.id;
+      clauses.push('u.id != @selfId');
     }
-    const placeholders = subordinateIds.map((id, i) => {
-      params[`id${i}`] = id;
-      return `@id${i}`;
-    });
-    clauses.push(`u.id IN (${placeholders.join(', ')})`);
-  } else {
-    params.selfId = req.user.id;
-    clauses.push('u.id != @selfId');
-  }
 
-  if (req.query.role) {
-    params.role = req.query.role;
-    clauses.push('u.role = @role');
-  }
+    if (req.query.role) {
+      params.role = req.query.role;
+      clauses.push('u.role = @role');
+    }
 
-  const users = db
-    .prepare(
-      `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.unique_id,
-              p.name AS parent_name,
-              COUNT(s.id) AS surveyCount
-       FROM users u
-       LEFT JOIN users p ON p.id = u.parent_id
-       LEFT JOIN surveys s ON s.created_by = u.id
-       WHERE ${clauses.join(' AND ')}
-       GROUP BY u.id
-       ORDER BY u.created_at DESC`
-    )
-    .all(params);
-  res.json({ data: users });
-});
+    const users = (
+      await db.execute({
+        sql: `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.unique_id,
+                     p.name AS parent_name,
+                     COUNT(s.id) AS surveyCount
+              FROM users u
+              LEFT JOIN users p ON p.id = u.parent_id
+              LEFT JOIN surveys s ON s.created_by = u.id
+              WHERE ${clauses.join(' AND ')}
+              GROUP BY u.id
+              ORDER BY u.created_at DESC`,
+        args: params,
+      })
+    ).rows;
+    res.json({ data: users });
+  })
+);
 
 // Eligible "reports to" options for a given role, for the developer's registration form.
-router.get('/parents', requireRole('developer'), (req, res) => {
-  const { role } = req.query;
-  const parentRoles = REQUIRED_PARENT_ROLES[role] || OPTIONAL_PARENT_ROLES[role];
-  if (!parentRoles) return res.json({ data: [] });
+router.get(
+  '/parents',
+  requireRole('developer'),
+  asyncHandler(async (req, res) => {
+    const { role } = req.query;
+    const parentRoles = REQUIRED_PARENT_ROLES[role] || OPTIONAL_PARENT_ROLES[role];
+    if (!parentRoles) return res.json({ data: [] });
 
-  const params = {};
-  const placeholders = parentRoles.map((r, i) => {
-    params[`r${i}`] = r;
-    return `@r${i}`;
-  });
-  const rows = db
-    .prepare(`SELECT id, name, role FROM users WHERE role IN (${placeholders.join(', ')}) AND status = 'active' ORDER BY name`)
-    .all(params);
-  res.json({ data: rows });
-});
+    const params = {};
+    const placeholders = parentRoles.map((r, i) => {
+      params[`r${i}`] = r;
+      return `@r${i}`;
+    });
+    const rows = (
+      await db.execute({
+        sql: `SELECT id, name, role FROM users WHERE role IN (${placeholders.join(', ')}) AND status = 'active' ORDER BY name`,
+        args: params,
+      })
+    ).rows;
+    res.json({ data: rows });
+  })
+);
 
 // The requester's own reporting chain, top ancestor first, themselves last —
 // shown on the Profile screen.
-router.get('/hierarchy', (req, res) => {
-  res.json({ data: getAncestorChain(req.user.id) });
-});
+router.get(
+  '/hierarchy',
+  asyncHandler(async (req, res) => {
+    res.json({ data: await getAncestorChain(req.user.id) });
+  })
+);
 
 // A single user's profile, plus everyone who reports to them (directly or
 // indirectly) — the Team Directory's "View" action. The requester must
 // themselves be allowed to see the target (self, or within their downline).
-router.get('/:id', requireRole(...MANAGER_ROLES), (req, res) => {
-  const targetId = Number(req.params.id);
-  const visibleIds = getVisibleUserIds(req.user);
-  if (visibleIds && !visibleIds.includes(targetId)) {
-    return res.status(403).json({ message: 'You do not have permission to view this user.' });
-  }
+router.get(
+  '/:id',
+  requireRole(...MANAGER_ROLES),
+  asyncHandler(async (req, res) => {
+    const targetId = Number(req.params.id);
+    const visibleIds = await getVisibleUserIds(req.user);
+    if (visibleIds && !visibleIds.includes(targetId)) {
+      return res.status(403).json({ message: 'You do not have permission to view this user.' });
+    }
 
-  const target = db
-    .prepare(
-      `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.unique_id,
-              p.name AS parent_name,
-              COUNT(s.id) AS surveyCount
-       FROM users u
-       LEFT JOIN users p ON p.id = u.parent_id
-       LEFT JOIN surveys s ON s.created_by = u.id
-       WHERE u.id = ?
-       GROUP BY u.id`
-    )
-    .get(targetId);
-  if (!target) return res.status(404).json({ message: 'User not found.' });
+    const target = (
+      await db.execute({
+        sql: `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.unique_id,
+                     p.name AS parent_name,
+                     COUNT(s.id) AS surveyCount
+              FROM users u
+              LEFT JOIN users p ON p.id = u.parent_id
+              LEFT JOIN surveys s ON s.created_by = u.id
+              WHERE u.id = @id
+              GROUP BY u.id`,
+        args: { id: targetId },
+      })
+    ).rows[0];
+    if (!target) return res.status(404).json({ message: 'User not found.' });
 
-  const subordinateIds = getDescendantIds(targetId).filter((id) => id !== targetId);
-  const subordinates = subordinateIds.length
-    ? db
-        .prepare(
-          `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.unique_id,
-                  COUNT(s.id) AS surveyCount
-           FROM users u
-           LEFT JOIN surveys s ON s.created_by = u.id
-           WHERE u.id IN (${subordinateIds.map(() => '?').join(', ')})
-           GROUP BY u.id
-           ORDER BY u.created_at DESC`
-        )
-        .all(...subordinateIds)
-    : [];
+    const subordinateIds = (await getDescendantIds(targetId)).filter((id) => id !== targetId);
+    const subordinates = subordinateIds.length
+      ? (
+          await db.execute({
+            sql: `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.unique_id,
+                         COUNT(s.id) AS surveyCount
+                  FROM users u
+                  LEFT JOIN surveys s ON s.created_by = u.id
+                  WHERE u.id IN (${subordinateIds.map(() => '?').join(', ')})
+                  GROUP BY u.id
+                  ORDER BY u.created_at DESC`,
+            args: subordinateIds,
+          })
+        ).rows
+      : [];
 
-  res.json({ data: { ...target, subordinates } });
-});
+    res.json({ data: { ...target, subordinates } });
+  })
+);
 
-router.patch('/:id/status', requireRole(...MANAGER_ROLES), (req, res) => {
-  const { status } = req.body;
-  if (!['active', 'inactive'].includes(status)) {
-    return res.status(400).json({ message: 'Status must be active or inactive.' });
-  }
-  if (Number(req.params.id) === req.user.id) {
-    return res.status(403).json({ message: 'You cannot change your own status.' });
-  }
+router.patch(
+  '/:id/status',
+  requireRole(...MANAGER_ROLES),
+  asyncHandler(async (req, res) => {
+    const { status } = req.body;
+    if (!['active', 'inactive'].includes(status)) {
+      return res.status(400).json({ message: 'Status must be active or inactive.' });
+    }
+    if (Number(req.params.id) === req.user.id) {
+      return res.status(403).json({ message: 'You cannot change your own status.' });
+    }
 
-  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
-  if (!target) return res.status(404).json({ message: 'User not found.' });
+    const target = (
+      await db.execute({ sql: 'SELECT * FROM users WHERE id = @id', args: { id: req.params.id } })
+    ).rows[0];
+    if (!target) return res.status(404).json({ message: 'User not found.' });
 
-  const visibleIds = getVisibleUserIds(req.user);
-  if (visibleIds && !visibleIds.includes(target.id)) {
-    return res.status(403).json({ message: 'You do not have permission to manage this user.' });
-  }
+    const visibleIds = await getVisibleUserIds(req.user);
+    if (visibleIds && !visibleIds.includes(target.id)) {
+      return res.status(403).json({ message: 'You do not have permission to manage this user.' });
+    }
 
-  db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, req.params.id);
-  res.json({ message: 'User status updated.' });
-});
+    await db.execute({ sql: 'UPDATE users SET status = @status WHERE id = @id', args: { status, id: req.params.id } });
+    res.json({ message: 'User status updated.' });
+  })
+);
 
 module.exports = router;

@@ -1,21 +1,35 @@
 const path = require('path');
 const fs = require('fs');
-const Database = require('better-sqlite3');
+const { createClient } = require('@libsql/client');
 require('dotenv').config();
 const { ROLES } = require('../constants/roles');
 const { buildProfileId, buildSurveyId, generateUniqueId } = require('../utils/uniqueId');
 
-const dbPath = process.env.DB_PATH || './data/gramsetu.db';
-const resolvedPath = path.resolve(__dirname, '../../', dbPath);
-const dataDir = path.dirname(resolvedPath);
-
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+// Production points TURSO_DATABASE_URL/TURSO_AUTH_TOKEN at a free Turso cloud
+// database, so data survives restarts/redeploys on Render's ephemeral free
+// tier. With no Turso env vars set (plain local dev), this falls back to the
+// same local SQLite file as before — libSQL's embedded mode.
+const tursoUrl = process.env.TURSO_DATABASE_URL;
+let url;
+if (tursoUrl) {
+  url = tursoUrl;
+} else {
+  const dbPath = process.env.DB_PATH || './data/gramsetu.db';
+  const resolvedPath = path.resolve(__dirname, '../../', dbPath);
+  const dataDir = path.dirname(resolvedPath);
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  url = `file:${resolvedPath}`;
 }
 
-const db = new Database(resolvedPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const db = createClient(tursoUrl ? { url, authToken: process.env.TURSO_AUTH_TOKEN } : { url });
+
+// WAL mode only makes sense for a local file (Turso's hosted sqld manages its
+// own storage/journaling). Without it, libSQL's default rollback journal
+// creates/deletes a `-journal` file on every write, which — among other
+// things — makes nodemon think the project changed and restart mid-request.
+const journalModeReady = tursoUrl ? Promise.resolve() : db.execute('PRAGMA journal_mode = WAL');
 
 const USERS_TABLE_SQL = `
   CREATE TABLE users (
@@ -34,189 +48,202 @@ const USERS_TABLE_SQL = `
   );
 `;
 
-const usersTableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'`).get();
+async function tableInfo(table) {
+  const result = await db.execute(`PRAGMA table_info(${table})`);
+  return result.rows.map((c) => c.name);
+}
 
-if (!usersTableExists) {
-  db.exec(USERS_TABLE_SQL);
-} else {
-  const columns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
-  // Older installs predate the hierarchy roles (admin/agent only, no parent_id).
-  // Rebuild the table in place, mapping the old 'agent' role onto 'field_agent'.
-  if (!columns.includes('parent_id')) {
-    // legacy_alter_table keeps other tables' "REFERENCES users(id)" text pointing
-    // at the literal name "users" across the rename below, instead of SQLite
-    // rewriting it to "users_old" (which would leave a dangling FK once dropped).
-    db.pragma('foreign_keys = OFF');
-    db.pragma('legacy_alter_table = ON');
-    db.exec('BEGIN');
-    try {
-      db.exec('ALTER TABLE users RENAME TO users_old');
-      db.exec(USERS_TABLE_SQL);
-      db.exec(`
-        INSERT INTO users (id, name, email, password_hash, role, parent_id, status, reset_token, reset_token_expires, created_at)
-        SELECT id, name, email, password_hash,
-               CASE role WHEN 'agent' THEN 'field_agent' ELSE role END,
-               NULL, status, reset_token, reset_token_expires, created_at
-        FROM users_old
-      `);
-      db.exec('DROP TABLE users_old');
-      db.exec('COMMIT');
-    } catch (err) {
-      db.exec('ROLLBACK');
-      throw err;
-    } finally {
-      db.pragma('legacy_alter_table = OFF');
-      db.pragma('foreign_keys = ON');
+async function tableExists(table) {
+  const result = await db.execute({
+    sql: `SELECT name FROM sqlite_master WHERE type = 'table' AND name = @table`,
+    args: { table },
+  });
+  return !!result.rows[0];
+}
+
+// Runs the full schema setup / migration / backfill. Awaited once at server
+// startup (see index.js) before the app starts accepting requests.
+async function migrate() {
+  await journalModeReady;
+
+  if (!(await tableExists('users'))) {
+    await db.execute(USERS_TABLE_SQL);
+  } else {
+    const columns = await tableInfo('users');
+    // Older installs predate the hierarchy roles (admin/agent only, no parent_id).
+    // Rebuild the table in place, mapping the old 'agent' role onto 'field_agent'.
+    if (!columns.includes('parent_id')) {
+      const tx = await db.transaction('write');
+      try {
+        await tx.execute('PRAGMA legacy_alter_table = ON');
+        await tx.execute('ALTER TABLE users RENAME TO users_old');
+        await tx.execute(USERS_TABLE_SQL);
+        await tx.execute(`
+          INSERT INTO users (id, name, email, password_hash, role, parent_id, status, reset_token, reset_token_expires, created_at)
+          SELECT id, name, email, password_hash,
+                 CASE role WHEN 'agent' THEN 'field_agent' ELSE role END,
+                 NULL, status, reset_token, reset_token_expires, created_at
+          FROM users_old
+        `);
+        await tx.execute('DROP TABLE users_old');
+        await tx.commit();
+      } catch (err) {
+        await tx.rollback();
+        throw err;
+      }
     }
   }
-}
 
-// Older installs predate district/unique_id on users.
-const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
-if (!userColumns.includes('district')) {
-  db.exec('ALTER TABLE users ADD COLUMN district TEXT');
-}
-if (!userColumns.includes('unique_id')) {
-  db.exec('ALTER TABLE users ADD COLUMN unique_id TEXT');
-}
+  // Older installs predate district/unique_id on users.
+  const userColumns = await tableInfo('users');
+  if (!userColumns.includes('district')) {
+    await db.execute('ALTER TABLE users ADD COLUMN district TEXT');
+  }
+  if (!userColumns.includes('unique_id')) {
+    await db.execute('ALTER TABLE users ADD COLUMN unique_id TEXT');
+  }
 
-// Backfill: every pre-existing account needs a home district (defaulted to
-// Khordha, this project's base) and a unique id, since both are now assigned
-// at creation time going forward.
-db.exec(`UPDATE users SET district = 'Khordha' WHERE district IS NULL OR district = ''`);
+  // Backfill: every pre-existing account needs a home district (defaulted to
+  // Khordha, this project's base) and a unique id, since both are now assigned
+  // at creation time going forward.
+  await db.execute(`UPDATE users SET district = 'Khordha' WHERE district IS NULL OR district = ''`);
 
-const usersNeedingId = db.prepare('SELECT id, role, district FROM users WHERE unique_id IS NULL OR unique_id = \'\'').all();
-if (usersNeedingId.length) {
-  const idExists = db.prepare('SELECT 1 FROM users WHERE unique_id = ?');
-  const setUniqueId = db.prepare('UPDATE users SET unique_id = ? WHERE id = ?');
-  for (const u of usersNeedingId) {
-    const uniqueId = generateUniqueId(
+  const usersNeedingId = await db.execute(
+    "SELECT id, role, district FROM users WHERE unique_id IS NULL OR unique_id = ''"
+  );
+  for (const u of usersNeedingId.rows) {
+    const uniqueId = await generateUniqueId(
       () => buildProfileId(u.role, u.district),
-      (candidate) => !!idExists.get(candidate)
+      async (candidate) => {
+        const existing = await db.execute({ sql: 'SELECT 1 FROM users WHERE unique_id = @id', args: { id: candidate } });
+        return !!existing.rows[0];
+      }
     );
-    setUniqueId.run(uniqueId, u.id);
+    await db.execute({ sql: 'UPDATE users SET unique_id = @uniqueId WHERE id = @id', args: { uniqueId, id: u.id } });
   }
-}
 
-db.exec('CREATE INDEX IF NOT EXISTS idx_users_parent_id ON users(parent_id)');
-try {
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_unique_id ON users(unique_id)');
-} catch (err) {
-  console.warn('Could not create uniqueness index on users.unique_id:', err.message);
-}
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_users_parent_id ON users(parent_id)');
+  try {
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_unique_id ON users(unique_id)');
+  } catch (err) {
+    console.warn('Could not create uniqueness index on users.unique_id:', err.message);
+  }
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS surveys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    unique_id TEXT,
-    full_name TEXT NOT NULL,
-    guardian_name TEXT,
-    gender TEXT,
-    dob TEXT,
-    aadhaar_number TEXT,
-    mobile_number TEXT NOT NULL,
-    email TEXT,
-    state TEXT,
-    district TEXT,
-    block TEXT,
-    panchayat TEXT,
-    village_town TEXT,
-    address TEXT,
-    pincode TEXT,
-    category TEXT,
-    religion TEXT,
-    ration_card_type TEXT,
-    house_type TEXT,
-    house_ownership TEXT,
-    family_members_count INTEGER,
-    monthly_income REAL,
-    occupation TEXT,
-    land_owned_acres REAL,
-    has_two_wheeler INTEGER NOT NULL DEFAULT 0,
-    has_four_wheeler INTEGER NOT NULL DEFAULT 0,
-    has_fridge INTEGER NOT NULL DEFAULT 0,
-    has_tv INTEGER NOT NULL DEFAULT 0,
-    has_ac INTEGER NOT NULL DEFAULT 0,
-    has_gas_connection INTEGER NOT NULL DEFAULT 0,
-    has_washing_machine INTEGER NOT NULL DEFAULT 0,
-    has_computer INTEGER NOT NULL DEFAULT 0,
-    has_smartphone INTEGER NOT NULL DEFAULT 0,
-    has_bank_account INTEGER NOT NULL DEFAULT 0,
-    bank_name TEXT,
-    bank_account_number TEXT,
-    has_water_pump INTEGER NOT NULL DEFAULT 0,
-    govt_scheme_availed TEXT,
-    remarks TEXT,
-    created_by INTEGER NOT NULL REFERENCES users(id),
-    created_by_name TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_by INTEGER REFERENCES users(id),
-    updated_at TEXT,
-    status TEXT NOT NULL DEFAULT 'Final'
+  await db.executeMultiple(`
+    CREATE TABLE IF NOT EXISTS surveys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      unique_id TEXT,
+      full_name TEXT NOT NULL,
+      guardian_name TEXT,
+      gender TEXT,
+      dob TEXT,
+      aadhaar_number TEXT,
+      mobile_number TEXT NOT NULL,
+      email TEXT,
+      state TEXT,
+      district TEXT,
+      block TEXT,
+      panchayat TEXT,
+      village_town TEXT,
+      address TEXT,
+      pincode TEXT,
+      category TEXT,
+      religion TEXT,
+      ration_card_type TEXT,
+      house_type TEXT,
+      house_ownership TEXT,
+      family_members_count INTEGER,
+      monthly_income REAL,
+      occupation TEXT,
+      land_owned_acres REAL,
+      has_two_wheeler INTEGER NOT NULL DEFAULT 0,
+      has_four_wheeler INTEGER NOT NULL DEFAULT 0,
+      has_fridge INTEGER NOT NULL DEFAULT 0,
+      has_tv INTEGER NOT NULL DEFAULT 0,
+      has_ac INTEGER NOT NULL DEFAULT 0,
+      has_gas_connection INTEGER NOT NULL DEFAULT 0,
+      has_washing_machine INTEGER NOT NULL DEFAULT 0,
+      has_computer INTEGER NOT NULL DEFAULT 0,
+      has_smartphone INTEGER NOT NULL DEFAULT 0,
+      has_bank_account INTEGER NOT NULL DEFAULT 0,
+      bank_name TEXT,
+      bank_account_number TEXT,
+      has_water_pump INTEGER NOT NULL DEFAULT 0,
+      govt_scheme_availed TEXT,
+      remarks TEXT,
+      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_by_name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_by INTEGER REFERENCES users(id),
+      updated_at TEXT,
+      status TEXT NOT NULL DEFAULT 'Final'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_surveys_created_by ON surveys(created_by);
+    CREATE INDEX IF NOT EXISTS idx_surveys_full_name ON surveys(full_name);
+
+    CREATE TABLE IF NOT EXISTS edit_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      survey_id INTEGER NOT NULL REFERENCES surveys(id),
+      requested_by INTEGER NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_by INTEGER REFERENCES users(id),
+      decided_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_edit_requests_survey_id ON edit_requests(survey_id);
+    CREATE INDEX IF NOT EXISTS idx_edit_requests_status ON edit_requests(status);
+  `);
+
+  // Older installs predate the status/Panchayat/unique_id columns.
+  const surveyColumns = await tableInfo('surveys');
+  if (!surveyColumns.includes('status')) {
+    await db.execute("ALTER TABLE surveys ADD COLUMN status TEXT NOT NULL DEFAULT 'Final'");
+  }
+  if (!surveyColumns.includes('panchayat')) {
+    await db.execute('ALTER TABLE surveys ADD COLUMN panchayat TEXT');
+  }
+  if (!surveyColumns.includes('unique_id')) {
+    await db.execute('ALTER TABLE surveys ADD COLUMN unique_id TEXT');
+  }
+
+  // Backfill unique ids for any pre-existing survey rows.
+  const surveysNeedingId = await db.execute(
+    "SELECT id, district, panchayat, village_town FROM surveys WHERE unique_id IS NULL OR unique_id = ''"
   );
-
-  CREATE INDEX IF NOT EXISTS idx_surveys_created_by ON surveys(created_by);
-  CREATE INDEX IF NOT EXISTS idx_surveys_full_name ON surveys(full_name);
-
-  -- One row per edit request a record's owner raises; a developer approves or
-  -- declines it, which is what actually unlocks (or re-locks) the survey record.
-  CREATE TABLE IF NOT EXISTS edit_requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    survey_id INTEGER NOT NULL REFERENCES surveys(id),
-    requested_by INTEGER NOT NULL REFERENCES users(id),
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    decided_by INTEGER REFERENCES users(id),
-    decided_at TEXT
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_edit_requests_survey_id ON edit_requests(survey_id);
-  CREATE INDEX IF NOT EXISTS idx_edit_requests_status ON edit_requests(status);
-`);
-
-// Older installs predate the status/Panchayat columns.
-const surveyColumns = db.prepare('PRAGMA table_info(surveys)').all().map((c) => c.name);
-if (!surveyColumns.includes('status')) {
-  db.exec("ALTER TABLE surveys ADD COLUMN status TEXT NOT NULL DEFAULT 'Final'");
-}
-if (!surveyColumns.includes('panchayat')) {
-  db.exec('ALTER TABLE surveys ADD COLUMN panchayat TEXT');
-}
-if (!surveyColumns.includes('unique_id')) {
-  db.exec('ALTER TABLE surveys ADD COLUMN unique_id TEXT');
-}
-
-// Backfill unique ids for any pre-existing survey rows.
-const surveysNeedingId = db.prepare("SELECT id, district, panchayat, village_town FROM surveys WHERE unique_id IS NULL OR unique_id = ''").all();
-if (surveysNeedingId.length) {
-  const surveyIdExists = db.prepare('SELECT 1 FROM surveys WHERE unique_id = ?');
-  const setSurveyUniqueId = db.prepare('UPDATE surveys SET unique_id = ? WHERE id = ?');
-  for (const s of surveysNeedingId) {
-    const uniqueId = generateUniqueId(
+  for (const s of surveysNeedingId.rows) {
+    const uniqueId = await generateUniqueId(
       () => buildSurveyId(s.district, s.panchayat, s.village_town),
-      (candidate) => !!surveyIdExists.get(candidate)
+      async (candidate) => {
+        const existing = await db.execute({
+          sql: 'SELECT 1 FROM surveys WHERE unique_id = @id',
+          args: { id: candidate },
+        });
+        return !!existing.rows[0];
+      }
     );
-    setSurveyUniqueId.run(uniqueId, s.id);
+    await db.execute({ sql: 'UPDATE surveys SET unique_id = @uniqueId WHERE id = @id', args: { uniqueId, id: s.id } });
+  }
+
+  // Older rows predate the canonical xxxx-xxxx-xxxx Aadhaar format — reformat any
+  // still stored as a bare 12-digit string (dashed/empty values are left untouched).
+  await db.execute(`
+    UPDATE surveys
+    SET aadhaar_number = substr(aadhaar_number, 1, 4) || '-' || substr(aadhaar_number, 5, 4) || '-' || substr(aadhaar_number, 9, 4)
+    WHERE aadhaar_number GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
+  `);
+
+  // Defense in depth against duplicate mobile/Aadhaar numbers, on top of the
+  // application-level check in routes/surveys.js. Wrapped because an existing
+  // install could in theory already contain duplicates this can't retroactively fix.
+  try {
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_mobile_unique ON surveys(mobile_number)');
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_aadhaar_unique ON surveys(aadhaar_number)');
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_unique_id ON surveys(unique_id)');
+  } catch (err) {
+    console.warn('Could not create uniqueness indexes on surveys (existing duplicate data?):', err.message);
   }
 }
 
-// Older rows predate the canonical xxxx-xxxx-xxxx Aadhaar format — reformat any
-// still stored as a bare 12-digit string (dashed/empty values are left untouched).
-db.exec(`
-  UPDATE surveys
-  SET aadhaar_number = substr(aadhaar_number, 1, 4) || '-' || substr(aadhaar_number, 5, 4) || '-' || substr(aadhaar_number, 9, 4)
-  WHERE aadhaar_number GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]'
-`);
-
-// Defense in depth against duplicate mobile/Aadhaar numbers, on top of the
-// application-level check in routes/surveys.js. Wrapped because an existing
-// install could in theory already contain duplicates this can't retroactively fix.
-try {
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_mobile_unique ON surveys(mobile_number)');
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_aadhaar_unique ON surveys(aadhaar_number)');
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_unique_id ON surveys(unique_id)');
-} catch (err) {
-  console.warn('Could not create uniqueness indexes on surveys (existing duplicate data?):', err.message);
-}
-
-module.exports = db;
+module.exports = { db, migrate };

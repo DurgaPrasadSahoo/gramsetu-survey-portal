@@ -2,8 +2,9 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const db = require('../db/connection');
+const { db } = require('../db/connection');
 const { authenticate, requireRole } = require('../middleware/auth');
+const asyncHandler = require('../middleware/asyncHandler');
 const { ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
 const { ODISHA_DISTRICTS } = require('../constants/districtCodes');
 const { buildProfileId, generateUniqueId } = require('../utils/uniqueId');
@@ -31,142 +32,184 @@ function toPublicUser(user) {
   };
 }
 
+async function findUserByEmail(email) {
+  const result = await db.execute({ sql: 'SELECT * FROM users WHERE email = @email', args: { email } });
+  return result.rows[0];
+}
+
+async function findUserById(id) {
+  const result = await db.execute({ sql: 'SELECT * FROM users WHERE id = @id', args: { id } });
+  return result.rows[0];
+}
+
 // Registering new accounts (of any role, including field agents) is a developer-only
 // action — there is no public self-registration. This is how every level of the
 // Head of District -> Head of Panchayat -> Field Agent hierarchy gets provisioned.
-router.post('/register', authenticate, requireRole('developer'), (req, res) => {
-  const { name, email, password, confirmPassword, role, parentId, district } = req.body;
+router.post(
+  '/register',
+  authenticate,
+  requireRole('developer'),
+  asyncHandler(async (req, res) => {
+    const { name, email, password, confirmPassword, role, parentId, district } = req.body;
 
-  if (!name || !email || !password || !role || !district) {
-    return res.status(400).json({ message: 'Name, email, password, role and district are required.' });
-  }
-  if (password.length < 6) {
-    return res.status(400).json({ message: 'Password must be at least 6 characters.' });
-  }
-  if (confirmPassword !== undefined && password !== confirmPassword) {
-    return res.status(400).json({ message: 'Passwords do not match.' });
-  }
-  if (!ROLES.includes(role)) {
-    return res.status(400).json({ message: 'Invalid role selected.' });
-  }
-  if (!ODISHA_DISTRICTS.includes(district)) {
-    return res.status(400).json({ message: 'Invalid district selected.' });
-  }
-
-  let resolvedParentId = null;
-  const requiredParentRoles = REQUIRED_PARENT_ROLES[role];
-  const optionalParentRoles = OPTIONAL_PARENT_ROLES[role];
-
-  if (requiredParentRoles) {
-    if (!parentId) {
-      return res.status(400).json({ message: 'Please select who this user reports to.' });
+    if (!name || !email || !password || !role || !district) {
+      return res.status(400).json({ message: 'Name, email, password, role and district are required.' });
     }
-    const parent = db.prepare('SELECT * FROM users WHERE id = ?').get(parentId);
-    if (!parent || !requiredParentRoles.includes(parent.role)) {
-      return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters.' });
     }
-    resolvedParentId = parent.id;
-  } else if (optionalParentRoles && parentId) {
-    const parent = db.prepare('SELECT * FROM users WHERE id = ?').get(parentId);
-    if (!parent || !optionalParentRoles.includes(parent.role)) {
-      return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
+    if (confirmPassword !== undefined && password !== confirmPassword) {
+      return res.status(400).json({ message: 'Passwords do not match.' });
     }
-    resolvedParentId = parent.id;
-  }
+    if (!ROLES.includes(role)) {
+      return res.status(400).json({ message: 'Invalid role selected.' });
+    }
+    if (!ODISHA_DISTRICTS.includes(district)) {
+      return res.status(400).json({ message: 'Invalid district selected.' });
+    }
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
-  if (existing) {
-    return res.status(409).json({ message: 'An account with this email already exists.' });
-  }
+    let resolvedParentId = null;
+    const requiredParentRoles = REQUIRED_PARENT_ROLES[role];
+    const optionalParentRoles = OPTIONAL_PARENT_ROLES[role];
 
-  const hash = bcrypt.hashSync(password, 10);
-  const uniqueId = generateUniqueId(
-    () => buildProfileId(role, district),
-    (candidate) => !!db.prepare('SELECT 1 FROM users WHERE unique_id = ?').get(candidate)
-  );
-  const info = db
-    .prepare(
-      `INSERT INTO users (name, email, password_hash, role, parent_id, district, unique_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`
-    )
-    .run(name.trim(), email.toLowerCase().trim(), hash, role, resolvedParentId, district, uniqueId);
+    if (requiredParentRoles) {
+      if (!parentId) {
+        return res.status(400).json({ message: 'Please select who this user reports to.' });
+      }
+      const parent = await findUserById(parentId);
+      if (!parent || !requiredParentRoles.includes(parent.role)) {
+        return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
+      }
+      resolvedParentId = parent.id;
+    } else if (optionalParentRoles && parentId) {
+      const parent = await findUserById(parentId);
+      if (!parent || !optionalParentRoles.includes(parent.role)) {
+        return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
+      }
+      resolvedParentId = parent.id;
+    }
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-  res.status(201).json({ user: toPublicUser(user) });
-});
+    const existing = await findUserByEmail(email.toLowerCase().trim());
+    if (existing) {
+      return res.status(409).json({ message: 'An account with this email already exists.' });
+    }
 
-router.post('/login', (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required.' });
-  }
+    const hash = bcrypt.hashSync(password, 10);
+    const uniqueId = await generateUniqueId(
+      () => buildProfileId(role, district),
+      async (candidate) => {
+        const result = await db.execute({ sql: 'SELECT 1 FROM users WHERE unique_id = @id', args: { id: candidate } });
+        return !!result.rows[0];
+      }
+    );
+    const info = await db.execute({
+      sql: `INSERT INTO users (name, email, password_hash, role, parent_id, district, unique_id, status)
+            VALUES (@name, @email, @hash, @role, @parentId, @district, @uniqueId, 'active')`,
+      args: {
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        hash,
+        role,
+        parentId: resolvedParentId,
+        district,
+        uniqueId,
+      },
+    });
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
-  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-    return res.status(401).json({ message: 'Invalid email or password.' });
-  }
-  if (user.status !== 'active') {
-    return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
-  }
+    const user = await findUserById(Number(info.lastInsertRowid));
+    res.status(201).json({ user: toPublicUser(user) });
+  })
+);
 
-  const token = signToken(user);
-  res.json({ token, user: toPublicUser(user) });
-});
+router.post(
+  '/login',
+  asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ message: 'Email and password are required.' });
+    }
 
-router.get('/me', authenticate, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!user) return res.status(404).json({ message: 'User not found.' });
-  res.json({ user: toPublicUser(user) });
-});
+    const user = await findUserByEmail(email.toLowerCase().trim());
+    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+      return res.status(401).json({ message: 'Invalid email or password.' });
+    }
+    if (user.status !== 'active') {
+      return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
+    }
+
+    const token = signToken(user);
+    res.json({ token, user: toPublicUser(user) });
+  })
+);
+
+router.get(
+  '/me',
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const user = await findUserById(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    res.json({ user: toPublicUser(user) });
+  })
+);
 
 // Forgot password: issues a time-limited reset token.
 // NOTE: this demo has no email/SMS service wired up, so the token is returned
 // directly in the API response (and logged) instead of being emailed out.
-router.post('/forgot-password', (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ message: 'Email is required.' });
+router.post(
+  '/forgot-password',
+  asyncHandler(async (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: 'Email is required.' });
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
-  // Always respond with 200 to avoid leaking which emails are registered.
-  if (!user) {
-    return res.json({ message: 'If that email is registered, a reset link has been generated.' });
-  }
+    const user = await findUserByEmail(email.toLowerCase().trim());
+    // Always respond with 200 to avoid leaking which emails are registered.
+    if (!user) {
+      return res.json({ message: 'If that email is registered, a reset link has been generated.' });
+    }
 
-  const token = crypto.randomBytes(32).toString('hex');
-  const expires = Date.now() + 1000 * 60 * 30; // 30 minutes
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = Date.now() + 1000 * 60 * 30; // 30 minutes
 
-  db.prepare('UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?').run(token, expires, user.id);
+    await db.execute({
+      sql: 'UPDATE users SET reset_token = @token, reset_token_expires = @expires WHERE id = @id',
+      args: { token, expires, id: user.id },
+    });
 
-  console.log(`[password reset] ${user.email} -> token=${token} (valid 30 min)`);
+    console.log(`[password reset] ${user.email} -> token=${token} (valid 30 min)`);
 
-  res.json({
-    message: 'If that email is registered, a reset link has been generated.',
-    // Exposed here only because this demo portal has no outbound email/SMS integration.
-    devResetToken: token,
-  });
-});
+    res.json({
+      message: 'If that email is registered, a reset link has been generated.',
+      // Exposed here only because this demo portal has no outbound email/SMS integration.
+      devResetToken: token,
+    });
+  })
+);
 
-router.post('/reset-password', (req, res) => {
-  const { token, password } = req.body;
-  if (!token || !password) {
-    return res.status(400).json({ message: 'Reset token and new password are required.' });
-  }
-  if (password.length < 6) {
-    return res.status(400).json({ message: 'Password must be at least 6 characters.' });
-  }
+router.post(
+  '/reset-password',
+  asyncHandler(async (req, res) => {
+    const { token, password } = req.body;
+    if (!token || !password) {
+      return res.status(400).json({ message: 'Reset token and new password are required.' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+    }
 
-  const user = db.prepare('SELECT * FROM users WHERE reset_token = ?').get(token);
-  if (!user || !user.reset_token_expires || user.reset_token_expires < Date.now()) {
-    return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
-  }
+    const result = await db.execute({ sql: 'SELECT * FROM users WHERE reset_token = @token', args: { token } });
+    const user = result.rows[0];
+    if (!user || !user.reset_token_expires || user.reset_token_expires < Date.now()) {
+      return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
+    }
 
-  const hash = bcrypt.hashSync(password, 10);
-  db.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?').run(
-    hash,
-    user.id
-  );
+    const hash = bcrypt.hashSync(password, 10);
+    await db.execute({
+      sql: 'UPDATE users SET password_hash = @hash, reset_token = NULL, reset_token_expires = NULL WHERE id = @id',
+      args: { hash, id: user.id },
+    });
 
-  res.json({ message: 'Password has been reset successfully. You can now log in.' });
-});
+    res.json({ message: 'Password has been reset successfully. You can now log in.' });
+  })
+);
 
 module.exports = router;
