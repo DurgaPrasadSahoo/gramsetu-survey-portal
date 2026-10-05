@@ -5,7 +5,7 @@ export default function ConfirmDialog({ open, title, message, confirmLabel = 'Co
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal">
         <h3>{title}</h3>
-        <p>{message}</p>
+        <div className="modal-message">{message}</div>
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onCancel}>Cancel</button>
           <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={onConfirm}>

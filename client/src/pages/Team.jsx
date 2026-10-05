@@ -3,8 +3,11 @@ import api from '../api/client';
 import ActionsMenu from '../components/ActionsMenu';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { ROLE_BADGE_CLASS, ROLE_LABELS, roleLabel } from '../constants/roles';
+import { displayUserStatus } from '../constants/userStatus';
 
-const ROLE_FILTER_OPTIONS = ['head_of_district', 'head_of_panchayat', 'field_agent', 'admin', 'developer'];
+// Developer never appears here (see server/src/routes/users.js), so it's not
+// offered as a filter either.
+const ROLE_FILTER_OPTIONS = ['head_of_district', 'head_of_panchayat', 'field_agent', 'admin'];
 
 export default function Team() {
   const [users, setUsers] = useState([]);
@@ -79,35 +82,37 @@ export default function Team() {
             <span>Status</span>
             <span>Actions</span>
           </div>
-          {filteredUsers.map((user, index) => (
-            <div className="record-row" key={user.id}>
-              <span data-label="SL No.">{index + 1}</span>
-              <span data-label="Unique ID">{user.unique_id}</span>
-              <span data-label="Name">{user.name}</span>
-              <span data-label="Role">
-                <span className={`badge ${ROLE_BADGE_CLASS[user.role] || ''}`}>{roleLabel(user.role)}</span>
-              </span>
-              <span data-label="Reports To">{user.parent_name || '—'}</span>
-              <span data-label="Surveys Submitted">{user.surveyCount}</span>
-              <span data-label="Status">
-                <span className={`badge ${user.status === 'active' ? 'badge-active' : 'badge-inactive'}`}>
-                  {user.status}
+          {filteredUsers.map((user, index) => {
+            const status = displayUserStatus(user);
+            return (
+              <div className="record-row" key={user.id}>
+                <span data-label="SL No.">{index + 1}</span>
+                <span data-label="Unique ID">{user.unique_id}</span>
+                <span data-label="Name">{user.name}</span>
+                <span data-label="Role">
+                  <span className={`badge ${ROLE_BADGE_CLASS[user.role] || ''}`}>{roleLabel(user.role)}</span>
                 </span>
-              </span>
-              <span data-label="Actions" className="record-actions">
-                <ActionsMenu
-                  items={[
-                    { label: 'View', to: `/team/${user.id}` },
-                    {
-                      label: user.status === 'active' ? 'Deactivate' : 'Activate',
-                      danger: user.status === 'active',
-                      onClick: () => setStatusTarget(user),
-                    },
-                  ]}
-                />
-              </span>
-            </div>
-          ))}
+                <span data-label="Reports To">{user.parent_name || '—'}</span>
+                <span data-label="Surveys Submitted">{user.surveyCount}</span>
+                <span data-label="Status">
+                  <span className={`badge ${status.badgeClass}`}>{status.label}</span>
+                </span>
+                <span data-label="Actions" className="record-actions">
+                  <ActionsMenu
+                    items={[
+                      { label: 'View', to: `/team/${user.id}` },
+                      {
+                        label: user.status === 'active' ? 'Deactivate' : 'Activate',
+                        danger: user.status === 'active',
+                        disabled: !!user.pending_status_action,
+                        onClick: () => setStatusTarget(user),
+                      },
+                    ]}
+                  />
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 

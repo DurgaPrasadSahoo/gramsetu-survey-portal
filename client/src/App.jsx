@@ -5,17 +5,22 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import Maintenance from './pages/Maintenance';
 import Dashboard from './pages/Dashboard';
 import SurveyList from './pages/SurveyList';
 import SurveyAdd from './pages/SurveyAdd';
 import SurveyDetails from './pages/SurveyDetails';
 import SurveyEdit from './pages/SurveyEdit';
 import EditRequests from './pages/EditRequests';
+import AccountRequests from './pages/AccountRequests';
+import SoftwareFunctionality from './pages/SoftwareFunctionality';
 import Team from './pages/Team';
 import UserDetail from './pages/UserDetail';
 import Profile from './pages/Profile';
 import SchemesInfo from './pages/SchemesInfo';
 import NotFound from './pages/NotFound';
+
+const CAN_REGISTER_ROLES = ['developer', 'admin', 'head_of_district', 'head_of_panchayat'];
 
 export default function App() {
   return (
@@ -23,6 +28,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/maintenance" element={<Maintenance />} />
 
       <Route element={<ProtectedRoute />}>
         <Route element={<Layout />}>
@@ -42,11 +48,17 @@ export default function App() {
             <Route path="/team/:id" element={<UserDetail />} />
           </Route>
 
-          {/* Registering new accounts (any role, including field agents) and deciding
-              edit requests are both developer-only actions. */}
-          <Route element={<ProtectedRoute roles={['developer']} />}>
+          {/* Anyone but a field agent can register someone to work under them. */}
+          <Route element={<ProtectedRoute roles={CAN_REGISTER_ROLES} />}>
             <Route path="/register" element={<Register />} />
+          </Route>
+
+          {/* Deciding edit/profile/status requests and pausing the portal are
+              all developer-only actions. */}
+          <Route element={<ProtectedRoute roles={['developer']} />}>
             <Route path="/edit-requests" element={<EditRequests />} />
+            <Route path="/account-requests" element={<AccountRequests />} />
+            <Route path="/software-functionality" element={<SoftwareFunctionality />} />
           </Route>
         </Route>
       </Route>

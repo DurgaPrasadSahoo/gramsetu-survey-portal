@@ -4,7 +4,9 @@ const { authenticate } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { getVisibleUserIds } = require('../utils/hierarchy');
 const { SURVEY_STATUS, EDIT_REQUEST_STATUS } = require('../constants/surveyStatus');
-const { buildSurveyId, generateUniqueId } = require('../utils/uniqueId');
+const { TASK_STATUS } = require('../constants/taskStatus');
+const { SCHEME_BY_KEY, markedSchemeLabels, unmarkedSchemes } = require('../constants/schemes');
+const { buildSurveyId, buildTaskId, generateUniqueId } = require('../utils/uniqueId');
 
 const router = express.Router();
 router.use(authenticate);
@@ -330,6 +332,18 @@ router.put(
       args: { ...data, updated_by: req.user.id, status: nextStatus, id: req.params.id },
     });
 
+    // Any open task for a scheme the edit just marked as availed is moot now — remove it.
+    const nowMarked = new Set(markedSchemeLabels(data.govt_scheme_availed));
+    const openTasks = (
+      await db.execute({ sql: 'SELECT id, scheme_label FROM survey_tasks WHERE survey_id = @id', args: { id: req.params.id } })
+    ).rows;
+    for (const task of openTasks) {
+      if (nowMarked.has(task.scheme_label)) {
+        await db.execute({ sql: 'DELETE FROM task_requests WHERE task_id = @id', args: { id: task.id } });
+        await db.execute({ sql: 'DELETE FROM survey_tasks WHERE id = @id', args: { id: task.id } });
+      }
+    }
+
     const survey = (await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: req.params.id } })).rows[0];
     res.json({ data: survey });
   })
@@ -345,11 +359,121 @@ router.delete(
     const denial = assertCanModify(existing, req.user);
     if (denial) return res.status(denial.status).json({ message: denial.message });
 
-    // A survey can have edit_requests rows pointing at it; delete those first
-    // or the FK constraint rejects deleting the survey itself.
+    // A survey can have edit_requests/survey_tasks (and their own task_requests)
+    // pointing at it; delete those first or the FK constraints reject deleting
+    // the survey itself.
+    const taskIds = (
+      await db.execute({ sql: 'SELECT id FROM survey_tasks WHERE survey_id = @id', args: { id: req.params.id } })
+    ).rows.map((t) => t.id);
+    for (const taskId of taskIds) {
+      await db.execute({ sql: 'DELETE FROM task_requests WHERE task_id = @id', args: { id: taskId } });
+    }
+    await db.execute({ sql: 'DELETE FROM survey_tasks WHERE survey_id = @id', args: { id: req.params.id } });
     await db.execute({ sql: 'DELETE FROM edit_requests WHERE survey_id = @id', args: { id: req.params.id } });
     await db.execute({ sql: 'DELETE FROM surveys WHERE id = @id', args: { id: req.params.id } });
     res.json({ message: 'Survey record deleted.' });
+  })
+);
+
+// A viewer's visibility into one survey record — shared by the task routes
+// below, which anyone who can see the survey may use.
+async function assertCanView(req, res, surveyId) {
+  const survey = (await db.execute({ sql: 'SELECT * FROM surveys WHERE id = @id', args: { id: surveyId } })).rows[0];
+  if (!survey) {
+    res.status(404).json({ message: 'Survey record not found.' });
+    return null;
+  }
+  const visibleIds = await getVisibleUserIds(req.user);
+  if (visibleIds && !visibleIds.includes(survey.created_by)) {
+    res.status(403).json({ message: 'You do not have permission to view this record.' });
+    return null;
+  }
+  return survey;
+}
+
+// Work tasks: one per scheme the household hasn't been enrolled in yet.
+// Anyone who can view the survey can see/add them, but only once it's Final —
+// not while an edit is in progress.
+router.get(
+  '/:id/tasks',
+  asyncHandler(async (req, res) => {
+    const survey = await assertCanView(req, res, req.params.id);
+    if (!survey) return;
+
+    const tasks = (
+      await db.execute({
+        sql: `SELECT t.id, t.unique_id, t.scheme_key, t.scheme_label, t.status, t.created_at,
+                     u.id AS initiated_by_id, u.name AS initiated_by_name,
+                     (SELECT tr.action FROM task_requests tr WHERE tr.task_id = t.id AND tr.status = 'pending'
+                      ORDER BY tr.created_at DESC LIMIT 1) AS pending_action,
+                     (SELECT tr.proposed_status FROM task_requests tr WHERE tr.task_id = t.id AND tr.status = 'pending'
+                      ORDER BY tr.created_at DESC LIMIT 1) AS pending_proposed_status
+              FROM survey_tasks t
+              JOIN users u ON u.id = t.initiated_by
+              WHERE t.survey_id = @id
+              ORDER BY t.created_at DESC`,
+        args: { id: req.params.id },
+      })
+    ).rows;
+
+    res.json({
+      data: tasks,
+      unmarkedSchemes: unmarkedSchemes(survey.govt_scheme_availed),
+      canAdd: survey.status === SURVEY_STATUS.FINAL,
+    });
+  })
+);
+
+router.post(
+  '/:id/tasks',
+  asyncHandler(async (req, res) => {
+    const survey = await assertCanView(req, res, req.params.id);
+    if (!survey) return;
+
+    if (survey.status !== SURVEY_STATUS.FINAL) {
+      return res.status(400).json({ message: 'Work tasks can only be added once the survey record is Final.' });
+    }
+
+    const scheme = SCHEME_BY_KEY[req.body.schemeKey];
+    if (!scheme) return res.status(400).json({ message: 'Invalid scheme.' });
+
+    const available = unmarkedSchemes(survey.govt_scheme_availed).some((s) => s.key === scheme.key);
+    if (!available) {
+      return res.status(400).json({ message: 'This scheme is already marked as availed on this survey, or no longer needs a task.' });
+    }
+
+    const existingTask = (
+      await db.execute({
+        sql: 'SELECT 1 FROM survey_tasks WHERE survey_id = @surveyId AND scheme_key = @schemeKey',
+        args: { surveyId: survey.id, schemeKey: scheme.key },
+      })
+    ).rows[0];
+    if (existingTask) {
+      return res.status(409).json({ message: 'A work task for this scheme already exists on this survey.' });
+    }
+
+    const uniqueId = await generateUniqueId(
+      () => buildTaskId(scheme.key),
+      async (candidate) => {
+        const result = await db.execute({ sql: 'SELECT 1 FROM survey_tasks WHERE unique_id = @id', args: { id: candidate } });
+        return !!result.rows[0];
+      }
+    );
+
+    await db.execute({
+      sql: `INSERT INTO survey_tasks (unique_id, survey_id, scheme_key, scheme_label, status, initiated_by)
+            VALUES (@uniqueId, @surveyId, @schemeKey, @schemeLabel, @status, @initiatedBy)`,
+      args: {
+        uniqueId,
+        surveyId: survey.id,
+        schemeKey: scheme.key,
+        schemeLabel: scheme.label,
+        status: TASK_STATUS.ADDED,
+        initiatedBy: req.user.id,
+      },
+    });
+
+    res.status(201).json({ message: 'Work task added.' });
   })
 );
 

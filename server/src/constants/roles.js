@@ -25,4 +25,22 @@ const ROLE_CODES = {
   field_agent: 'FA',
 };
 
-module.exports = { ROLES, MANAGER_ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES, ROLE_CODES };
+// Which roles a given role is allowed to register (strictly below them in the
+// hierarchy — never their own level or above). Field agents can't register
+// anyone; only another developer can create a developer or admin account.
+const CREATABLE_ROLES_BY_ROLE = {
+  developer: ['developer', 'admin', 'head_of_district', 'head_of_panchayat', 'field_agent'],
+  admin: ['head_of_district', 'head_of_panchayat', 'field_agent'],
+  head_of_district: ['head_of_panchayat', 'field_agent'],
+  head_of_panchayat: ['field_agent'],
+  field_agent: [],
+};
+
+module.exports = {
+  ROLES,
+  MANAGER_ROLES,
+  REQUIRED_PARENT_ROLES,
+  OPTIONAL_PARENT_ROLES,
+  ROLE_CODES,
+  CREATABLE_ROLES_BY_ROLE,
+};

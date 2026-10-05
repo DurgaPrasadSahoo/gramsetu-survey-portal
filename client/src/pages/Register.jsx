@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import PasswordField from '../components/PasswordField';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES, ROLE_LABELS, roleLabel } from '../constants/roles';
+import { REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES, ROLE_LABELS, CREATABLE_ROLES_BY_ROLE, roleLabel } from '../constants/roles';
 import { ODISHA_DISTRICTS } from '../constants/surveyOptions';
 
-const CREATABLE_ROLES = ['head_of_district', 'head_of_panchayat', 'field_agent', 'admin', 'developer'];
-
-const EMPTY_FORM = {
-  name: '', email: '', password: '', confirmPassword: '', role: 'field_agent', parentId: '', district: 'Khordha',
-};
+function emptyForm(defaultRole) {
+  return {
+    name: '', email: '', mobileNumber: '', password: '', confirmPassword: '',
+    role: defaultRole, parentId: '', district: 'Khordha',
+  };
+}
 
 export default function Register() {
-  const [form, setForm] = useState(EMPTY_FORM);
+  const { user, isDeveloper } = useAuth();
+  const creatableRoles = CREATABLE_ROLES_BY_ROLE[user?.role] || [];
+  const defaultRole = creatableRoles[creatableRoles.length - 1];
+
+  const [form, setForm] = useState(() => emptyForm(defaultRole));
   const [parentOptions, setParentOptions] = useState([]);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -35,6 +41,10 @@ export default function Register() {
       .catch(() => setParentOptions([]));
   }, [form.role, showParentField]);
 
+  if (creatableRoles.length === 0) {
+    return <div className="alert alert-error">You do not have permission to register new accounts.</div>;
+  }
+
   const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const handleRoleChange = (role) => setForm((prev) => ({ ...prev, role, parentId: '' }));
@@ -43,7 +53,7 @@ export default function Register() {
     e.preventDefault();
     setError('');
     setSuccess('');
-    if (form.password !== form.confirmPassword) {
+    if (isDeveloper && form.password !== form.confirmPassword) {
       setError('Passwords do not match.');
       return;
     }
@@ -61,14 +71,18 @@ export default function Register() {
       const { data } = await api.post('/auth/register', {
         name: form.name,
         email: form.email,
-        password: form.password,
-        confirmPassword: form.confirmPassword,
+        mobileNumber: form.mobileNumber,
         role: form.role,
         parentId: form.parentId || undefined,
         district: form.district,
+        ...(isDeveloper ? { password: form.password, confirmPassword: form.confirmPassword } : {}),
       });
-      setSuccess(`${roleLabel(data.user.role)} account created for ${data.user.name} (${data.user.email}) — ${data.user.unique_id}.`);
-      setForm(EMPTY_FORM);
+      setSuccess(
+        data.pendingApproval
+          ? `${roleLabel(data.user.role)} account submitted for ${data.user.name} (${data.user.email}) — awaiting developer approval before it can be used.`
+          : `${roleLabel(data.user.role)} account created for ${data.user.name} (${data.user.email}) — ${data.user.unique_id}.`
+      );
+      setForm(emptyForm(defaultRole));
     } catch (err) {
       setError(err.response?.data?.message || 'Unable to create this account. Please try again.');
     } finally {
@@ -82,7 +96,9 @@ export default function Register() {
         <div>
           <h1>Register New User</h1>
           <p className="page-subtitle">
-            Developer-only: create accounts anywhere in the hierarchy — Head of District, Head of Panchayat, or Field Agent.
+            {isDeveloper
+              ? 'Create accounts anywhere in the hierarchy — the account goes live immediately.'
+              : "Create an account for someone who'll work under you. A developer reviews and activates it before it can log in."}
           </p>
         </div>
       </div>
@@ -101,9 +117,20 @@ export default function Register() {
             <input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} required />
           </label>
           <label className="form-field">
+            <span className="form-label">Mobile Number</span>
+            <input
+              value={form.mobileNumber}
+              onChange={(e) => update('mobileNumber', e.target.value.replace(/\D/g, '').slice(0, 10))}
+              maxLength={10}
+              inputMode="numeric"
+              placeholder="10-digit mobile"
+              required
+            />
+          </label>
+          <label className="form-field">
             <span className="form-label">Role</span>
             <select value={form.role} onChange={(e) => handleRoleChange(e.target.value)}>
-              {CREATABLE_ROLES.map((r) => (
+              {creatableRoles.map((r) => (
                 <option key={r} value={r}>{ROLE_LABELS[r]}</option>
               ))}
             </select>
@@ -129,11 +156,15 @@ export default function Register() {
             </label>
           )}
 
-          <PasswordField label="Password" value={form.password} onChange={(e) => update('password', e.target.value)} required minLength={6} autoComplete="new-password" />
-          <PasswordField label="Confirm Password" value={form.confirmPassword} onChange={(e) => update('confirmPassword', e.target.value)} required minLength={6} autoComplete="new-password" />
+          {isDeveloper && (
+            <>
+              <PasswordField label="Password" value={form.password} onChange={(e) => update('password', e.target.value)} required minLength={6} autoComplete="new-password" />
+              <PasswordField label="Confirm Password" value={form.confirmPassword} onChange={(e) => update('confirmPassword', e.target.value)} required minLength={6} autoComplete="new-password" />
+            </>
+          )}
 
           <button className="btn btn-primary btn-block" type="submit" disabled={loading}>
-            {loading ? 'Creating account…' : 'Create Account'}
+            {loading ? 'Submitting…' : isDeveloper ? 'Create Account' : 'Submit for Approval'}
           </button>
           <p className="auth-footer-text">
             <Link to="/team">View team directory</Link>
@@ -143,9 +174,13 @@ export default function Register() {
 
       <ConfirmDialog
         open={confirmSubmit}
-        title="Create Account"
-        message={`Create a ${roleLabel(form.role)} account for ${form.name || 'this user'} (${form.email})?`}
-        confirmLabel="Create Account"
+        title={isDeveloper ? 'Create Account' : 'Submit Registration'}
+        message={
+          isDeveloper
+            ? `Create a ${roleLabel(form.role)} account for ${form.name || 'this user'} (${form.email})?`
+            : `Submit a ${roleLabel(form.role)} registration for ${form.name || 'this user'} (${form.email})? A developer will need to review and activate it.`
+        }
+        confirmLabel={isDeveloper ? 'Create Account' : 'Submit'}
         onConfirm={handleConfirmSubmit}
         onCancel={() => setConfirmSubmit(false)}
       />

@@ -28,6 +28,10 @@ export default function Profile() {
         <div className="profile-avatar">{user?.name?.charAt(0)}</div>
         <div className="profile-details">
           <div className="profile-row">
+            <span className="profile-label">Unique ID</span>
+            <span>{user?.unique_id}</span>
+          </div>
+          <div className="profile-row">
             <span className="profile-label">Full Name</span>
             <span>{user?.name}</span>
           </div>
@@ -36,10 +40,18 @@ export default function Profile() {
             <span>{user?.email}</span>
           </div>
           <div className="profile-row">
+            <span className="profile-label">Mobile Number</span>
+            <span>{user?.mobile_number || '—'}</span>
+          </div>
+          <div className="profile-row">
             <span className="profile-label">Role</span>
             <span className={`badge ${ROLE_BADGE_CLASS[user?.role] || ''}`}>
               {roleLabel(user?.role)}
             </span>
+          </div>
+          <div className="profile-row">
+            <span className="profile-label">District</span>
+            <span>{user?.district || '—'}</span>
           </div>
           <div className="profile-row">
             <span className="profile-label">Account Status</span>

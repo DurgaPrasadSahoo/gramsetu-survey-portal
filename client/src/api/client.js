@@ -22,6 +22,11 @@ api.interceptors.response.use(
         window.location.href = '/login';
       }
     }
+    // The developer has paused the portal — the session itself is still
+    // valid, so don't log out, just park everyone else on a holding page.
+    if (error.response?.status === 503 && !window.location.pathname.startsWith('/maintenance')) {
+      window.location.href = '/maintenance';
+    }
     return Promise.reject(error);
   }
 );

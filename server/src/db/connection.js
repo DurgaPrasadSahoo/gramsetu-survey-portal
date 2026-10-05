@@ -36,12 +36,13 @@ const USERS_TABLE_SQL = `
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
     role TEXT NOT NULL CHECK (role IN (${ROLES.map((r) => `'${r}'`).join(', ')})),
     parent_id INTEGER REFERENCES users(id),
     district TEXT,
+    mobile_number TEXT,
     unique_id TEXT,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'under_authentication')),
     reset_token TEXT,
     reset_token_expires INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -73,6 +74,11 @@ async function migrate() {
     // Older installs predate the hierarchy roles (admin/agent only, no parent_id).
     // Rebuild the table in place, mapping the old 'agent' role onto 'field_agent'.
     if (!columns.includes('parent_id')) {
+      // surveys/edit_requests may already exist and reference users(id) by
+      // this point (a later run of this same migration) — foreign_keys must
+      // be off for the rename+drop below, or dropping users_old fails even
+      // though legacy_alter_table keeps their FK text pointed at "users".
+      await db.execute('PRAGMA foreign_keys = OFF');
       const tx = await db.transaction('write');
       try {
         await tx.execute('PRAGMA legacy_alter_table = ON');
@@ -90,17 +96,55 @@ async function migrate() {
       } catch (err) {
         await tx.rollback();
         throw err;
+      } finally {
+        await db.execute('PRAGMA foreign_keys = ON');
       }
     }
   }
 
-  // Older installs predate district/unique_id on users.
+  // Older installs predate district/unique_id/mobile_number on users.
   const userColumns = await tableInfo('users');
   if (!userColumns.includes('district')) {
     await db.execute('ALTER TABLE users ADD COLUMN district TEXT');
   }
   if (!userColumns.includes('unique_id')) {
     await db.execute('ALTER TABLE users ADD COLUMN unique_id TEXT');
+  }
+  if (!userColumns.includes('mobile_number')) {
+    await db.execute('ALTER TABLE users ADD COLUMN mobile_number TEXT');
+  }
+
+  // Older installs predate the under_authentication status and the nullable
+  // password_hash it requires (a pending account has no password yet) — a
+  // CHECK constraint and a NOT NULL constraint can't be altered in place, so
+  // rebuild the table once, now that every column above is guaranteed to exist.
+  const usersTableSql = (
+    await db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+  ).rows[0]?.sql;
+  if (usersTableSql && !usersTableSql.includes('under_authentication')) {
+    // Same reasoning as the rebuild above: surveys/edit_requests already
+    // exist and reference users(id) on any install that's gotten this far.
+    await db.execute('PRAGMA foreign_keys = OFF');
+    const tx = await db.transaction('write');
+    try {
+      await tx.execute('PRAGMA legacy_alter_table = ON');
+      await tx.execute('ALTER TABLE users RENAME TO users_old');
+      await tx.execute(USERS_TABLE_SQL);
+      await tx.execute(`
+        INSERT INTO users (id, name, email, password_hash, role, parent_id, district, mobile_number, unique_id,
+                            status, reset_token, reset_token_expires, created_at)
+        SELECT id, name, email, password_hash, role, parent_id, district, mobile_number, unique_id,
+               status, reset_token, reset_token_expires, created_at
+        FROM users_old
+      `);
+      await tx.execute('DROP TABLE users_old');
+      await tx.commit();
+    } catch (err) {
+      await tx.rollback();
+      throw err;
+    } finally {
+      await db.execute('PRAGMA foreign_keys = ON');
+    }
   }
 
   // Backfill: every pre-existing account needs a home district (defaulted to
@@ -194,7 +238,85 @@ async function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_edit_requests_survey_id ON edit_requests(survey_id);
     CREATE INDEX IF NOT EXISTS idx_edit_requests_status ON edit_requests(status);
+
+    -- A newly registered account (by anyone other than a developer) sits here
+    -- awaiting developer review: they set a password (and may edit details),
+    -- which is what actually activates the user row already created for it.
+    CREATE TABLE IF NOT EXISTS profile_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      requested_by INTEGER NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_by INTEGER REFERENCES users(id),
+      decided_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_profile_requests_user_id ON profile_requests(user_id);
+    CREATE INDEX IF NOT EXISTS idx_profile_requests_status ON profile_requests(status);
+
+    -- A manager (anyone but a developer or field agent) asking to activate or
+    -- deactivate someone beneath them. The target's real status column is
+    -- untouched until a developer decides — they keep working normally.
+    CREATE TABLE IF NOT EXISTS status_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      requested_by INTEGER NOT NULL REFERENCES users(id),
+      action TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_by INTEGER REFERENCES users(id),
+      decided_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_status_requests_user_id ON status_requests(user_id);
+    CREATE INDEX IF NOT EXISTS idx_status_requests_status ON status_requests(status);
+
+    -- Single-row table: developer-controlled maintenance switch that, while
+    -- on, blocks every non-developer request.
+    CREATE TABLE IF NOT EXISTS app_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      maintenance_mode INTEGER NOT NULL DEFAULT 0,
+      updated_by INTEGER REFERENCES users(id),
+      updated_at TEXT
+    );
+
+    -- A follow-up task for one scheme a survey's household hasn't been
+    -- enrolled in yet. Created freely by anyone who can view the survey, once
+    -- it's Final; locked immediately afterwards (see task_requests).
+    CREATE TABLE IF NOT EXISTS survey_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      unique_id TEXT,
+      survey_id INTEGER NOT NULL REFERENCES surveys(id),
+      scheme_key TEXT NOT NULL,
+      scheme_label TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'added',
+      initiated_by INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_survey_tasks_survey_id ON survey_tasks(survey_id);
+    CREATE INDEX IF NOT EXISTS idx_survey_tasks_initiated_by ON survey_tasks(initiated_by);
+
+    -- A request to change a task's status or delete it outright — any change
+    -- to a task once created needs a developer's approval, same as surveys.
+    CREATE TABLE IF NOT EXISTS task_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL REFERENCES survey_tasks(id),
+      requested_by INTEGER NOT NULL REFERENCES users(id),
+      action TEXT NOT NULL,
+      proposed_status TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      decided_by INTEGER REFERENCES users(id),
+      decided_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_requests_task_id ON task_requests(task_id);
+    CREATE INDEX IF NOT EXISTS idx_task_requests_status ON task_requests(status);
   `);
+
+  await db.execute("INSERT OR IGNORE INTO app_settings (id, maintenance_mode) VALUES (1, 0)");
 
   // Older installs predate the status/Panchayat/unique_id columns.
   const surveyColumns = await tableInfo('surveys');
@@ -243,6 +365,14 @@ async function migrate() {
     await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_surveys_unique_id ON surveys(unique_id)');
   } catch (err) {
     console.warn('Could not create uniqueness indexes on surveys (existing duplicate data?):', err.message);
+  }
+
+  try {
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_tasks_unique_id ON survey_tasks(unique_id)');
+    // One open task per scheme per survey — once it's done/removed, another can be added.
+    await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_survey_tasks_survey_scheme ON survey_tasks(survey_id, scheme_key)');
+  } catch (err) {
+    console.warn('Could not create uniqueness indexes on survey_tasks:', err.message);
   }
 }
 

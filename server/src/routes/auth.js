@@ -3,11 +3,14 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { db } = require('../db/connection');
-const { authenticate, requireRole } = require('../middleware/auth');
+const { authenticate } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
+const { ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES, CREATABLE_ROLES_BY_ROLE } = require('../constants/roles');
 const { ODISHA_DISTRICTS } = require('../constants/districtCodes');
+const { USER_STATUS, PROFILE_REQUEST_STATUS } = require('../constants/userStatus');
 const { buildProfileId, generateUniqueId } = require('../utils/uniqueId');
+const { getVisibleUserIds } = require('../utils/hierarchy');
+const { isMaintenanceMode } = require('../utils/settings');
 
 const router = express.Router();
 
@@ -28,6 +31,7 @@ function toPublicUser(user) {
     status: user.status,
     parent_id: user.parent_id,
     district: user.district,
+    mobile_number: user.mobile_number,
     unique_id: user.unique_id,
   };
 }
@@ -42,49 +46,65 @@ async function findUserById(id) {
   return result.rows[0];
 }
 
-// Registering new accounts (of any role, including field agents) is a developer-only
-// action — there is no public self-registration. This is how every level of the
-// Head of District -> Head of Panchayat -> Field Agent hierarchy gets provisioned.
+// Registering new accounts: everyone but a field agent may do it, for any role
+// strictly below their own (see CREATABLE_ROLES_BY_ROLE) and only for people
+// who'd end up working under them. Only a developer sets a password directly
+// (their new accounts go live immediately); anyone else's submissions are
+// parked as 'under_authentication' with a profile_requests ticket for a
+// developer to review, set a password for, and activate.
 router.post(
   '/register',
   authenticate,
-  requireRole('developer'),
   asyncHandler(async (req, res) => {
-    const { name, email, password, confirmPassword, role, parentId, district } = req.body;
+    const { name, email, password, confirmPassword, role, parentId, district, mobileNumber } = req.body;
+    const isDeveloper = req.user.role === 'developer';
 
-    if (!name || !email || !password || !role || !district) {
-      return res.status(400).json({ message: 'Name, email, password, role and district are required.' });
+    const creatableRoles = CREATABLE_ROLES_BY_ROLE[req.user.role] || [];
+    if (!creatableRoles.length) {
+      return res.status(403).json({ message: 'You do not have permission to register new accounts.' });
     }
-    if (password.length < 6) {
-      return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+
+    if (!name || !email || !role || !district || !mobileNumber) {
+      return res.status(400).json({ message: 'Name, email, mobile number, role and district are required.' });
     }
-    if (confirmPassword !== undefined && password !== confirmPassword) {
-      return res.status(400).json({ message: 'Passwords do not match.' });
+    if (!/^\d{10}$/.test(mobileNumber)) {
+      return res.status(400).json({ message: 'Mobile number must be 10 digits.' });
     }
-    if (!ROLES.includes(role)) {
-      return res.status(400).json({ message: 'Invalid role selected.' });
+    if (!ROLES.includes(role) || !creatableRoles.includes(role)) {
+      return res.status(403).json({ message: 'You do not have permission to register this role.' });
     }
     if (!ODISHA_DISTRICTS.includes(district)) {
       return res.status(400).json({ message: 'Invalid district selected.' });
+    }
+    if (isDeveloper) {
+      if (!password) return res.status(400).json({ message: 'Password is required.' });
+      if (password.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+      if (confirmPassword !== undefined && password !== confirmPassword) {
+        return res.status(400).json({ message: 'Passwords do not match.' });
+      }
     }
 
     let resolvedParentId = null;
     const requiredParentRoles = REQUIRED_PARENT_ROLES[role];
     const optionalParentRoles = OPTIONAL_PARENT_ROLES[role];
 
-    if (requiredParentRoles) {
-      if (!parentId) {
+    if (requiredParentRoles || (optionalParentRoles && parentId)) {
+      if (requiredParentRoles && !parentId) {
         return res.status(400).json({ message: 'Please select who this user reports to.' });
       }
       const parent = await findUserById(parentId);
-      if (!parent || !requiredParentRoles.includes(parent.role)) {
+      const allowedParentRoles = requiredParentRoles || optionalParentRoles;
+      if (!parent || !allowedParentRoles.includes(parent.role)) {
         return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
       }
-      resolvedParentId = parent.id;
-    } else if (optionalParentRoles && parentId) {
-      const parent = await findUserById(parentId);
-      if (!parent || !optionalParentRoles.includes(parent.role)) {
-        return res.status(400).json({ message: 'Selected supervisor is not valid for this role.' });
+      // The supervisor must actually be reachable in the requester's own
+      // downline (or be the requester themselves) — a Head of District can
+      // register a Field Agent under one of their own Heads of Panchayat,
+      // but not under some other District's. getVisibleUserIds already
+      // returns null (no restriction) for admin/developer.
+      const visibleIds = await getVisibleUserIds(req.user);
+      if (visibleIds && !visibleIds.includes(parent.id)) {
+        return res.status(403).json({ message: 'That supervisor is not part of your own team.' });
       }
       resolvedParentId = parent.id;
     }
@@ -94,7 +114,6 @@ router.post(
       return res.status(409).json({ message: 'An account with this email already exists.' });
     }
 
-    const hash = bcrypt.hashSync(password, 10);
     const uniqueId = await generateUniqueId(
       () => buildProfileId(role, district),
       async (candidate) => {
@@ -102,9 +121,13 @@ router.post(
         return !!result.rows[0];
       }
     );
+
+    const hash = isDeveloper ? bcrypt.hashSync(password, 10) : null;
+    const status = isDeveloper ? USER_STATUS.ACTIVE : USER_STATUS.UNDER_AUTHENTICATION;
+
     const info = await db.execute({
-      sql: `INSERT INTO users (name, email, password_hash, role, parent_id, district, unique_id, status)
-            VALUES (@name, @email, @hash, @role, @parentId, @district, @uniqueId, 'active')`,
+      sql: `INSERT INTO users (name, email, password_hash, role, parent_id, district, mobile_number, unique_id, status)
+            VALUES (@name, @email, @hash, @role, @parentId, @district, @mobileNumber, @uniqueId, @status)`,
       args: {
         name: name.trim(),
         email: email.toLowerCase().trim(),
@@ -112,12 +135,22 @@ router.post(
         role,
         parentId: resolvedParentId,
         district,
+        mobileNumber,
         uniqueId,
+        status,
       },
     });
+    const newUserId = Number(info.lastInsertRowid);
 
-    const user = await findUserById(Number(info.lastInsertRowid));
-    res.status(201).json({ user: toPublicUser(user) });
+    if (!isDeveloper) {
+      await db.execute({
+        sql: 'INSERT INTO profile_requests (user_id, requested_by, status) VALUES (@userId, @requestedBy, @status)',
+        args: { userId: newUserId, requestedBy: req.user.id, status: PROFILE_REQUEST_STATUS.PENDING },
+      });
+    }
+
+    const user = await findUserById(newUserId);
+    res.status(201).json({ user: toPublicUser(user), pendingApproval: !isDeveloper });
   })
 );
 
@@ -130,11 +163,17 @@ router.post(
     }
 
     const user = await findUserByEmail(email.toLowerCase().trim());
-    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+    if (!user || !user.password_hash || !bcrypt.compareSync(password, user.password_hash)) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
-    if (user.status !== 'active') {
+    if (user.role !== 'developer' && (await isMaintenanceMode())) {
+      return res.status(503).json({ message: 'The portal is temporarily paused for maintenance. Please check back shortly.' });
+    }
+    if (user.status === USER_STATUS.INACTIVE) {
       return res.status(403).json({ message: 'Your account has been deactivated. Contact the administrator.' });
+    }
+    if (user.status === USER_STATUS.UNDER_AUTHENTICATION) {
+      return res.status(403).json({ message: 'Your account is awaiting developer approval. Please check back later.' });
     }
 
     const token = signToken(user);

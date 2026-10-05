@@ -28,6 +28,15 @@ export const OPTIONAL_PARENT_ROLES = {
   head_of_district: ['admin', 'developer'],
 };
 
+// Which roles a given role is allowed to register (mirrors the server).
+export const CREATABLE_ROLES_BY_ROLE = {
+  developer: ['developer', 'admin', 'head_of_district', 'head_of_panchayat', 'field_agent'],
+  admin: ['head_of_district', 'head_of_panchayat', 'field_agent'],
+  head_of_district: ['head_of_panchayat', 'field_agent'],
+  head_of_panchayat: ['field_agent'],
+  field_agent: [],
+};
+
 export function roleLabel(role) {
   return ROLE_LABELS[role] || role;
 }

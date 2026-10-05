@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import SurveyForm from '../components/SurveyForm';
 import ConfirmDialog from '../components/ConfirmDialog';
+import WorkTasks from '../components/WorkTasks';
 import { STATUS_BADGE_CLASS, SURVEY_STATUS } from '../constants/surveyStatus';
 import { getSurveyPermissions } from '../utils/surveyPermissions';
 
@@ -100,6 +101,8 @@ export default function SurveyDetails() {
       <div className="panel">
         <SurveyForm initialValues={survey} readOnly />
       </div>
+
+      <WorkTasks surveyId={id} />
 
       <ConfirmDialog
         open={confirmDelete}

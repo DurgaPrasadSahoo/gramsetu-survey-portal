@@ -32,6 +32,12 @@ function buildSurveyId(district, panchayat, village) {
   return `#SE-${STATE_CODE}-${districtCode(district)}-${placeCode(panchayat)}-${placeCode(village)}-${randomSuffix()}`;
 }
 
+// #TK-<SCHEME>-<RANDOM4>, e.g. #TK-PMAY-AB12
+function buildTaskId(schemeKey) {
+  const code = (schemeKey || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'XX';
+  return `#TK-${code}-${randomSuffix()}`;
+}
+
 // Retries id generation until `exists(id)` (an async DB lookup) comes back
 // empty. Collisions are vanishingly unlikely (36^4 combinations per bucket)
 // but are cheap to guard against outright.
@@ -43,4 +49,4 @@ async function generateUniqueId(build, exists) {
   throw new Error('Could not generate a unique id after multiple attempts.');
 }
 
-module.exports = { buildProfileId, buildSurveyId, generateUniqueId };
+module.exports = { buildProfileId, buildSurveyId, buildTaskId, generateUniqueId };
