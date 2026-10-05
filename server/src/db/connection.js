@@ -75,23 +75,26 @@ async function migrate() {
     // Rebuild the table in place, mapping the old 'agent' role onto 'field_agent'.
     if (!columns.includes('parent_id')) {
       // surveys/edit_requests may already exist and reference users(id) by
-      // this point (a later run of this same migration) — foreign_keys must
-      // be off for the rename+drop below, or dropping users_old fails even
-      // though legacy_alter_table keeps their FK text pointed at "users".
+      // this point (a later run of this same migration). Turso's remote
+      // server rejects `PRAGMA legacy_alter_table`, the usual way to rename
+      // the referenced table without SQLite rewriting their FK text — so
+      // instead we build the new table under a throwaway name (which nothing
+      // references, so there's nothing to rewrite), drop the old "users"
+      // table (foreign_keys OFF so the drop isn't blocked by the references),
+      // then rename the new table into the now-free "users" name.
       await db.execute('PRAGMA foreign_keys = OFF');
       const tx = await db.transaction('write');
       try {
-        await tx.execute('PRAGMA legacy_alter_table = ON');
-        await tx.execute('ALTER TABLE users RENAME TO users_old');
-        await tx.execute(USERS_TABLE_SQL);
+        await tx.execute(USERS_TABLE_SQL.replace('CREATE TABLE users', 'CREATE TABLE users_new'));
         await tx.execute(`
-          INSERT INTO users (id, name, email, password_hash, role, parent_id, status, reset_token, reset_token_expires, created_at)
+          INSERT INTO users_new (id, name, email, password_hash, role, parent_id, status, reset_token, reset_token_expires, created_at)
           SELECT id, name, email, password_hash,
                  CASE role WHEN 'agent' THEN 'field_agent' ELSE role END,
                  NULL, status, reset_token, reset_token_expires, created_at
-          FROM users_old
+          FROM users
         `);
-        await tx.execute('DROP TABLE users_old');
+        await tx.execute('DROP TABLE users');
+        await tx.execute('ALTER TABLE users_new RENAME TO users');
         await tx.commit();
       } catch (err) {
         await tx.rollback();
@@ -122,22 +125,22 @@ async function migrate() {
     await db.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
   ).rows[0]?.sql;
   if (usersTableSql && !usersTableSql.includes('under_authentication')) {
-    // Same reasoning as the rebuild above: surveys/edit_requests already
-    // exist and reference users(id) on any install that's gotten this far.
+    // Same reasoning as the rebuild above: build the new table under a
+    // throwaway name (nothing references it, so nothing needs rewriting),
+    // drop the old "users" table, then rename the new one into its place.
     await db.execute('PRAGMA foreign_keys = OFF');
     const tx = await db.transaction('write');
     try {
-      await tx.execute('PRAGMA legacy_alter_table = ON');
-      await tx.execute('ALTER TABLE users RENAME TO users_old');
-      await tx.execute(USERS_TABLE_SQL);
+      await tx.execute(USERS_TABLE_SQL.replace('CREATE TABLE users', 'CREATE TABLE users_new'));
       await tx.execute(`
-        INSERT INTO users (id, name, email, password_hash, role, parent_id, district, mobile_number, unique_id,
+        INSERT INTO users_new (id, name, email, password_hash, role, parent_id, district, mobile_number, unique_id,
                             status, reset_token, reset_token_expires, created_at)
         SELECT id, name, email, password_hash, role, parent_id, district, mobile_number, unique_id,
                status, reset_token, reset_token_expires, created_at
-        FROM users_old
+        FROM users
       `);
-      await tx.execute('DROP TABLE users_old');
+      await tx.execute('DROP TABLE users');
+      await tx.execute('ALTER TABLE users_new RENAME TO users');
       await tx.commit();
     } catch (err) {
       await tx.rollback();
