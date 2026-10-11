@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { to: '/surveys/new', label: 'New Survey Entry', icon: '📝', roles: ALL_ROLES },
   { to: '/schemes', label: 'Govt Schemes', icon: '📜', roles: ALL_ROLES },
   { to: '/team', label: 'Team Directory', icon: '🧑‍💼', roles: MANAGER_ROLES },
+  { to: '/analysis', label: 'Analysis', icon: '📊', roles: ['developer', 'admin'] },
   { to: '/edit-requests', label: 'Edit Requests', icon: '🔓', roles: ['developer'] },
   { to: '/account-requests', label: 'Account Requests', icon: '📨', roles: ['developer'] },
   { to: '/register', label: 'Register New User', icon: '➕', roles: CAN_REGISTER_ROLES },

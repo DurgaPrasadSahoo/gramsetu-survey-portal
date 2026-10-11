@@ -15,6 +15,7 @@ const profileRequestRoutes = require('./routes/profileRequests');
 const statusRequestRoutes = require('./routes/statusRequests');
 const settingsRoutes = require('./routes/settings');
 const taskRoutes = require('./routes/tasks');
+const analysisRoutes = require('./routes/analysis');
 
 const app = express();
 
@@ -31,6 +32,7 @@ app.use('/api/profile-requests', profileRequestRoutes);
 app.use('/api/status-requests', statusRequestRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/tasks', taskRoutes);
+app.use('/api/analysis', analysisRoutes);
 
 // In production, this same service also serves the built React app so the
 // whole portal runs as a single free web service (no separate frontend host,

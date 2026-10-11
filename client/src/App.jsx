@@ -16,6 +16,7 @@ import AccountRequests from './pages/AccountRequests';
 import SoftwareFunctionality from './pages/SoftwareFunctionality';
 import Team from './pages/Team';
 import UserDetail from './pages/UserDetail';
+import Analysis from './pages/Analysis';
 import Profile from './pages/Profile';
 import SchemesInfo from './pages/SchemesInfo';
 import NotFound from './pages/NotFound';
@@ -46,6 +47,11 @@ export default function App() {
           <Route element={<ProtectedRoute roles={['developer', 'admin', 'head_of_district', 'head_of_panchayat']} />}>
             <Route path="/team" element={<Team />} />
             <Route path="/team/:id" element={<UserDetail />} />
+          </Route>
+
+          {/* Portal-wide reporting — admin and developer only. */}
+          <Route element={<ProtectedRoute roles={['developer', 'admin']} />}>
+            <Route path="/analysis" element={<Analysis />} />
           </Route>
 
           {/* Anyone but a field agent can register someone to work under them. */}
