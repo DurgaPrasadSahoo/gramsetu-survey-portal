@@ -1,8 +1,10 @@
+import BrandMark from './BrandMark';
+
 export default function AuthShell({ title, subtitle, children }) {
   return (
     <div className="auth-page">
       <header className="auth-topbar">
-        <span className="brand-emblem">🇮🇳</span>
+        <BrandMark size={34} />
         <div>
           <div className="brand-title">GramSetu</div>
           <div className="brand-subtitle">Household Survey Portal — Bhubaneswar, Odisha</div>

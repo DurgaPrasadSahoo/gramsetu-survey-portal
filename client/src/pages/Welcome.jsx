@@ -1,5 +1,6 @@
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import BrandMark from '../components/BrandMark';
 
 export default function Welcome() {
   const { user, loading } = useAuth();
@@ -12,7 +13,7 @@ export default function Welcome() {
     <div className="welcome-page">
       <div className="welcome-content">
         <div className="welcome-logo">
-          <span className="welcome-emblem">🇮🇳</span>
+          <BrandMark size={56} />
           <h1 className="welcome-title">GramSetu</h1>
         </div>
         <p className="welcome-tagline">Household Survey &amp; Scheme-Delivery Portal — Bhubaneswar, Odisha</p>

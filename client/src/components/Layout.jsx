@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ROLE_LABELS } from '../constants/roles';
 import ConfirmDialog from './ConfirmDialog';
+import BrandMark from './BrandMark';
 
 const ALL_ROLES = Object.keys(ROLE_LABELS);
 const MANAGER_ROLES = ['developer', 'admin', 'head_of_district', 'head_of_panchayat'];
@@ -62,7 +63,7 @@ export default function Layout() {
           <span />
         </button>
         <div className="brand">
-          <span className="brand-emblem">🇮🇳</span>
+          <BrandMark size={38} />
           <div>
             <div className="brand-title">GramSetu</div>
             <div className="brand-subtitle">Household Survey Portal — Bhubaneswar, Odisha</div>
