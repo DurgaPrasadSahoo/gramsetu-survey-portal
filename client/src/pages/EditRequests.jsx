@@ -5,14 +5,13 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import { roleLabel } from '../constants/roles';
 import { taskStatusLabel } from '../constants/taskStatus';
 
-const ACTION_LABEL = { approve: 'Approve', decline: 'Decline' };
-
 function SurveyEditRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [decidingId, setDecidingId] = useState(null);
-  const [pendingAction, setPendingAction] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [confirmDecision, setConfirmDecision] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const loadRequests = () => {
     setLoading(true);
@@ -25,18 +24,18 @@ function SurveyEditRequests() {
 
   useEffect(loadRequests, []);
 
-  const handleConfirm = async () => {
-    const { ticket, action } = pendingAction;
-    setPendingAction(null);
-    setDecidingId(ticket.id);
-    setError('');
+  const handleFinalConfirm = async () => {
+    const decision = confirmDecision;
+    setConfirmDecision(null);
+    setSubmitting(true);
     try {
-      await api.post(`/edit-requests/${ticket.id}/${action}`);
+      await api.post(`/edit-requests/${detail.id}/${decision}`);
+      setDetail(null);
       loadRequests();
     } catch (err) {
-      setError(err.response?.data?.message || `Unable to ${action} this request.`);
+      setError(err.response?.data?.message || `Unable to ${decision} this request.`);
     } finally {
-      setDecidingId(null);
+      setSubmitting(false);
     }
   };
 
@@ -62,7 +61,7 @@ function SurveyEditRequests() {
             <span>Requested By</span>
             <span>Role</span>
             <span>Requested On</span>
-            <span>Actions</span>
+            <span>Action</span>
           </div>
           {requests.map((ticket, index) => (
             <div className="record-row" key={ticket.id}>
@@ -73,35 +72,40 @@ function SurveyEditRequests() {
               <span data-label="Requested By">{ticket.requester_name} ({ticket.requester_email})</span>
               <span data-label="Role">{roleLabel(ticket.requester_role)}</span>
               <span data-label="Requested On">{new Date(ticket.created_at).toLocaleString()}</span>
-              <span data-label="Actions" className="record-actions">
-                <button
-                  className="btn btn-primary btn-sm"
-                  disabled={decidingId === ticket.id}
-                  onClick={() => setPendingAction({ ticket, action: 'approve' })}
-                >
-                  Approve
-                </button>
-                <button
-                  className="btn btn-danger btn-sm"
-                  disabled={decidingId === ticket.id}
-                  onClick={() => setPendingAction({ ticket, action: 'decline' })}
-                >
-                  Decline
-                </button>
+              <span data-label="Action" className="record-actions">
+                <button className="btn btn-primary btn-sm" onClick={() => setDetail(ticket)}>Action</button>
               </span>
             </div>
           ))}
         </div>
       )}
 
+      {detail && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal">
+            <h3>Edit Request — {detail.survey_full_name}</h3>
+            <div className="modal-message">
+              <p><strong>Requested by:</strong> {detail.requester_name} ({detail.requester_email}, {roleLabel(detail.requester_role)})</p>
+              <p><strong>Requested on:</strong> {new Date(detail.created_at).toLocaleString()}</p>
+              <p>Approving unlocks this record for the owner to edit; declining returns it to Final, unchanged.</p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-outline" onClick={() => setDetail(null)} disabled={submitting}>Cancel</button>
+              <button className="btn btn-danger" onClick={() => setConfirmDecision('decline')} disabled={submitting}>Decline</button>
+              <button className="btn btn-primary" onClick={() => setConfirmDecision('approve')} disabled={submitting}>Approve</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
-        open={!!pendingAction}
-        title={`${ACTION_LABEL[pendingAction?.action]} Edit Request`}
-        message={`${ACTION_LABEL[pendingAction?.action]} the edit request for "${pendingAction?.ticket.survey_full_name}" from ${pendingAction?.ticket.requester_name}?`}
-        confirmLabel={ACTION_LABEL[pendingAction?.action]}
-        danger={pendingAction?.action === 'decline'}
-        onConfirm={handleConfirm}
-        onCancel={() => setPendingAction(null)}
+        open={!!confirmDecision}
+        title={confirmDecision === 'approve' ? 'Confirm Approval' : 'Confirm Decline'}
+        message={`${confirmDecision === 'approve' ? 'Approve' : 'Decline'} the edit request for "${detail?.survey_full_name}" from ${detail?.requester_name}?`}
+        confirmLabel={submitting ? 'Submitting…' : confirmDecision === 'approve' ? 'Approve' : 'Decline'}
+        danger={confirmDecision === 'decline'}
+        onConfirm={handleFinalConfirm}
+        onCancel={() => setConfirmDecision(null)}
       />
     </div>
   );
@@ -111,8 +115,9 @@ function TaskEditRequests() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [decidingId, setDecidingId] = useState(null);
-  const [pendingAction, setPendingAction] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [confirmDecision, setConfirmDecision] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const loadRequests = () => {
     setLoading(true);
@@ -125,18 +130,18 @@ function TaskEditRequests() {
 
   useEffect(loadRequests, []);
 
-  const handleConfirm = async () => {
-    const { ticket, action } = pendingAction;
-    setPendingAction(null);
-    setDecidingId(ticket.id);
-    setError('');
+  const handleFinalConfirm = async () => {
+    const decision = confirmDecision;
+    setConfirmDecision(null);
+    setSubmitting(true);
     try {
-      await api.post(`/tasks/requests/${ticket.id}/${action}`);
+      await api.post(`/tasks/requests/${detail.id}/${decision}`);
+      setDetail(null);
       loadRequests();
     } catch (err) {
-      setError(err.response?.data?.message || `Unable to ${action} this request.`);
+      setError(err.response?.data?.message || `Unable to ${decision} this request.`);
     } finally {
-      setDecidingId(null);
+      setSubmitting(false);
     }
   };
 
@@ -145,7 +150,7 @@ function TaskEditRequests() {
       <h3>Work Task Requests</h3>
       <p className="muted" style={{ marginTop: '-0.3rem', marginBottom: '0.9rem' }}>
         Status-change and delete requests for work tasks. Approving a status change applies it immediately;
-        approving a delete removes the task entirely.
+        approving a delete moves the task to Trash.
       </p>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -162,7 +167,7 @@ function TaskEditRequests() {
             <span>Requested Change</span>
             <span>Requested By</span>
             <span>Requested On</span>
-            <span>Actions</span>
+            <span>Action</span>
           </div>
           {requests.map((ticket, index) => (
             <div className="record-row" key={ticket.id}>
@@ -175,35 +180,41 @@ function TaskEditRequests() {
               </span>
               <span data-label="Requested By">{ticket.requested_by_name} ({roleLabel(ticket.requested_by_role)})</span>
               <span data-label="Requested On">{new Date(ticket.created_at).toLocaleString()}</span>
-              <span data-label="Actions" className="record-actions">
-                <button
-                  className="btn btn-primary btn-sm"
-                  disabled={decidingId === ticket.id}
-                  onClick={() => setPendingAction({ ticket, action: 'approve' })}
-                >
-                  Approve
-                </button>
-                <button
-                  className="btn btn-danger btn-sm"
-                  disabled={decidingId === ticket.id}
-                  onClick={() => setPendingAction({ ticket, action: 'decline' })}
-                >
-                  Decline
-                </button>
+              <span data-label="Action" className="record-actions">
+                <button className="btn btn-primary btn-sm" onClick={() => setDetail(ticket)}>Action</button>
               </span>
             </div>
           ))}
         </div>
       )}
 
+      {detail && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal">
+            <h3>Task Request — {detail.scheme_label}</h3>
+            <div className="modal-message">
+              <p><strong>Survey:</strong> {detail.survey_full_name}</p>
+              <p><strong>Requested change:</strong> {detail.action === 'delete' ? 'Delete task' : `Mark ${taskStatusLabel(detail.proposed_status)}`}</p>
+              <p><strong>Requested by:</strong> {detail.requested_by_name} ({roleLabel(detail.requested_by_role)})</p>
+              <p><strong>Requested on:</strong> {new Date(detail.created_at).toLocaleString()}</p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-outline" onClick={() => setDetail(null)} disabled={submitting}>Cancel</button>
+              <button className="btn btn-danger" onClick={() => setConfirmDecision('decline')} disabled={submitting}>Decline</button>
+              <button className="btn btn-primary" onClick={() => setConfirmDecision('approve')} disabled={submitting}>Approve</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmDialog
-        open={!!pendingAction}
-        title={`${ACTION_LABEL[pendingAction?.action]} Task Request`}
-        message={`${ACTION_LABEL[pendingAction?.action]} the request for "${pendingAction?.ticket.scheme_label}" from ${pendingAction?.ticket.requested_by_name}?`}
-        confirmLabel={ACTION_LABEL[pendingAction?.action]}
-        danger={pendingAction?.action === 'decline'}
-        onConfirm={handleConfirm}
-        onCancel={() => setPendingAction(null)}
+        open={!!confirmDecision}
+        title={confirmDecision === 'approve' ? 'Confirm Approval' : 'Confirm Decline'}
+        message={`${confirmDecision === 'approve' ? 'Approve' : 'Decline'} the request for "${detail?.scheme_label}" from ${detail?.requested_by_name}?`}
+        confirmLabel={submitting ? 'Submitting…' : confirmDecision === 'approve' ? 'Approve' : 'Decline'}
+        danger={confirmDecision === 'decline'}
+        onConfirm={handleFinalConfirm}
+        onCancel={() => setConfirmDecision(null)}
       />
     </div>
   );

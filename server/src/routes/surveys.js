@@ -359,6 +359,14 @@ router.delete(
     const denial = assertCanModify(existing, req.user);
     if (denial) return res.status(denial.status).json({ message: denial.message });
 
+    // Snapshot before anything is removed, so the developer can restore it
+    // from Trash later.
+    await db.execute({
+      sql: `INSERT INTO trash (record_type, original_id, payload, deleted_by, deleted_by_name)
+            VALUES ('survey', @id, @payload, @deletedBy, @deletedByName)`,
+      args: { id: existing.id, payload: JSON.stringify(existing), deletedBy: req.user.id, deletedByName: req.user.name },
+    });
+
     // A survey can have edit_requests/survey_tasks (and their own task_requests)
     // pointing at it; delete those first or the FK constraints reject deleting
     // the survey itself.

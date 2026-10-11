@@ -5,12 +5,12 @@ import { useAuth } from '../context/AuthContext';
 import PasswordField from '../components/PasswordField';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES, ROLE_LABELS, CREATABLE_ROLES_BY_ROLE, roleLabel } from '../constants/roles';
-import { ODISHA_DISTRICTS } from '../constants/surveyOptions';
+import { ODISHA_DISTRICTS, getPanchayatsForDistrict } from '../constants/surveyOptions';
 
 function emptyForm(defaultRole) {
   return {
     name: '', email: '', mobileNumber: '', password: '', confirmPassword: '',
-    role: defaultRole, parentId: '', district: 'Khordha',
+    role: defaultRole, parentId: '', district: 'Khordha', panchayat: '',
   };
 }
 
@@ -47,7 +47,13 @@ export default function Register() {
 
   const update = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
-  const handleRoleChange = (role) => setForm((prev) => ({ ...prev, role, parentId: '' }));
+  const handleRoleChange = (role) => setForm((prev) => ({ ...prev, role, parentId: '', panchayat: '' }));
+  const handleDistrictChange = (district) =>
+    setForm((prev) => ({
+      ...prev,
+      district,
+      panchayat: getPanchayatsForDistrict(district).includes(prev.panchayat) ? prev.panchayat : '',
+    }));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -59,6 +65,10 @@ export default function Register() {
     }
     if (needsParent && !form.parentId) {
       setError('Please select who this user reports to.');
+      return;
+    }
+    if (form.role === 'head_of_panchayat' && !form.panchayat) {
+      setError('Please select this user’s panchayat.');
       return;
     }
     setConfirmSubmit(true);
@@ -75,6 +85,7 @@ export default function Register() {
         role: form.role,
         parentId: form.parentId || undefined,
         district: form.district,
+        panchayat: form.role === 'head_of_panchayat' ? form.panchayat : undefined,
         ...(isDeveloper ? { password: form.password, confirmPassword: form.confirmPassword } : {}),
       });
       setSuccess(
@@ -137,10 +148,20 @@ export default function Register() {
           </label>
           <label className="form-field">
             <span className="form-label">District</span>
-            <select value={form.district} onChange={(e) => update('district', e.target.value)} required>
+            <select value={form.district} onChange={(e) => handleDistrictChange(e.target.value)} required>
               {ODISHA_DISTRICTS.map((d) => <option key={d}>{d}</option>)}
             </select>
           </label>
+
+          {form.role === 'head_of_panchayat' && (
+            <label className="form-field">
+              <span className="form-label">Panchayat</span>
+              <select value={form.panchayat} onChange={(e) => update('panchayat', e.target.value)} required>
+                <option value="">Select Panchayat</option>
+                {getPanchayatsForDistrict(form.district).map((p) => <option key={p}>{p}</option>)}
+              </select>
+            </label>
+          )}
 
           {showParentField && (
             <label className="form-field">

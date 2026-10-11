@@ -4,22 +4,36 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { SCHEME_BY_KEY, markedSchemeLabels } = require('../constants/schemes');
 const { TASK_STATUS } = require('../constants/taskStatus');
+const { getVisibleUserIds } = require('../utils/hierarchy');
 
 const router = express.Router();
 router.use(authenticate);
-// Both analysis views are an admin/developer-only reporting surface over
-// every household and every worker, so there's no hierarchy-visibility
-// scoping here the way there is for surveys.js/users.js — just a role gate.
-router.use(requireRole('developer', 'admin'));
+// Field agents have no Analysis tab at all (nothing to scope it to below
+// them). Everyone else sees it, but admin/developer get the unrestricted,
+// portal-wide view — every other role is locked to their own downline, with
+// their own district (and, for a Head of Panchayat, their own panchayat too)
+// forced server-side regardless of what the client sends, so one head can
+// never see another head's area just by editing the request.
+router.use(requireRole('developer', 'admin', 'head_of_district', 'head_of_panchayat'));
 
-// Distinct village names actually on record for a district/panchayat. There's
-// no static village list to cascade from (SurveyForm takes the village as
-// free text), so the filter is built from whatever households have already
-// been surveyed there.
+// Resolves the effective area filter and visibility scope for this requester:
+// null visibleIds means "no restriction" (admin/developer); otherwise every
+// query below must intersect with it, and district/panchayat are pinned to
+// the requester's own values no matter what the client asked for.
+async function resolveScope(user, query) {
+  if (user.role === 'admin' || user.role === 'developer') {
+    return { visibleIds: null, district: query.district, panchayat: query.panchayat, village: query.village };
+  }
+  const visibleIds = await getVisibleUserIds(user);
+  const district = user.district;
+  const panchayat = user.role === 'head_of_panchayat' ? user.panchayat : query.panchayat;
+  return { visibleIds, district, panchayat, village: query.village };
+}
+
 router.get(
   '/villages',
   asyncHandler(async (req, res) => {
-    const { district, panchayat } = req.query;
+    const { district, panchayat, visibleIds } = await resolveScope(req.user, req.query);
     const clauses = [`village_town IS NOT NULL`, `village_town != ''`];
     const params = {};
     if (district) {
@@ -29,6 +43,13 @@ router.get(
     if (panchayat) {
       clauses.push('panchayat = @panchayat');
       params.panchayat = panchayat;
+    }
+    if (visibleIds) {
+      const placeholders = visibleIds.map((id, i) => {
+        params[`v${i}`] = id;
+        return `@v${i}`;
+      });
+      clauses.push(`created_by IN (${placeholders.join(', ')})`);
     }
     const rows = (
       await db.execute({
@@ -40,12 +61,11 @@ router.get(
   })
 );
 
-// Survey analysis: every household survey under the selected area, filtered
-// to those where every selected scheme is (or isn't) marked availed.
 router.get(
   '/surveys',
   asyncHandler(async (req, res) => {
-    const { district, panchayat, village, availability, page = 1, pageSize = 10 } = req.query;
+    const { district, panchayat, village, visibleIds } = await resolveScope(req.user, req.query);
+    const { availability, page = 1, pageSize = 10 } = req.query;
 
     const schemeKeys = String(req.query.schemes || '')
       .split(',')
@@ -75,6 +95,13 @@ router.get(
     if (village) {
       clauses.push('village_town = @village');
       params.village = village;
+    }
+    if (visibleIds) {
+      const placeholders = visibleIds.map((id, i) => {
+        params[`v${i}`] = id;
+        return `@v${i}`;
+      });
+      clauses.push(`created_by IN (${placeholders.join(', ')})`);
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
@@ -111,12 +138,11 @@ router.get(
   })
 );
 
-// Team worker analysis: how much each worker has done (surveys submitted, or
-// work tasks initiated) within the selected area.
 router.get(
   '/workers',
   asyncHandler(async (req, res) => {
-    const { district, panchayat, village, performanceBased, sort = 'desc' } = req.query;
+    const { district, panchayat, village, visibleIds } = await resolveScope(req.user, req.query);
+    const { performanceBased, sort = 'desc' } = req.query;
     if (!['survey', 'task'].includes(performanceBased)) {
       return res.status(400).json({ message: 'Select a performance basis (Survey or Work Task).' });
     }
@@ -153,11 +179,20 @@ router.get(
 
     let countRows;
     if (performanceBased === 'survey') {
-      const where = areaClauses.length ? `WHERE ${areaClauses.join(' AND ')}` : '';
+      const clauses = [...areaClauses];
+      const params = { ...areaParams };
+      if (visibleIds) {
+        const placeholders = visibleIds.map((id, i) => {
+          params[`v${i}`] = id;
+          return `@v${i}`;
+        });
+        clauses.push(`created_by IN (${placeholders.join(', ')})`);
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
       countRows = (
         await db.execute({
           sql: `SELECT created_by AS user_id, COUNT(*) AS cnt FROM surveys ${where} GROUP BY created_by`,
-          args: areaParams,
+          args: params,
         })
       ).rows;
     } else {
@@ -168,6 +203,13 @@ router.get(
         return `@status${i}`;
       });
       const clauses = [...surveyAreaClauses, `t.status IN (${statusPlaceholders.join(', ')})`];
+      if (visibleIds) {
+        const placeholders = visibleIds.map((id, i) => {
+          params[`v${i}`] = id;
+          return `@v${i}`;
+        });
+        clauses.push(`t.initiated_by IN (${placeholders.join(', ')})`);
+      }
       countRows = (
         await db.execute({
           sql: `SELECT t.initiated_by AS user_id, COUNT(*) AS cnt
@@ -190,6 +232,13 @@ router.get(
       rosterClauses.push('district = @district');
       rosterParams.district = district;
     }
+    if (visibleIds) {
+      const placeholders = visibleIds.map((id, i) => {
+        rosterParams[`v${i}`] = id;
+        return `@v${i}`;
+      });
+      rosterClauses.push(`id IN (${placeholders.join(', ')})`);
+    }
     const rosterRows = (
       await db.execute({
         sql: `SELECT id, name, role, unique_id FROM users WHERE ${rosterClauses.join(' AND ')}`,
@@ -200,20 +249,25 @@ router.get(
 
     // Anyone outside that roster — an out-of-area head, an admin, even the
     // developer — who actually has matching work in this area counts too.
-    const evidenceIds = [...countMap.keys()].filter((id) => !roster.has(id));
-    if (evidenceIds.length) {
-      const params = {};
-      const placeholders = evidenceIds.map((id, i) => {
-        params[`ev${i}`] = id;
-        return `@ev${i}`;
-      });
-      const extra = (
-        await db.execute({
-          sql: `SELECT id, name, role, unique_id FROM users WHERE id IN (${placeholders.join(', ')})`,
-          args: params,
-        })
-      ).rows;
-      for (const u of extra) roster.set(u.id, u);
+    // Only for the unrestricted admin/developer view: a scoped requester
+    // (Head of District/Panchayat) never sees anyone outside their own
+    // downline, full stop — that's the whole point of the lock.
+    if (!visibleIds) {
+      const evidenceIds = [...countMap.keys()].filter((id) => !roster.has(id));
+      if (evidenceIds.length) {
+        const params = {};
+        const placeholders = evidenceIds.map((id, i) => {
+          params[`ev${i}`] = id;
+          return `@ev${i}`;
+        });
+        const extra = (
+          await db.execute({
+            sql: `SELECT id, name, role, unique_id FROM users WHERE id IN (${placeholders.join(', ')})`,
+            args: params,
+          })
+        ).rows;
+        for (const u of extra) roster.set(u.id, u);
+      }
     }
 
     const result = [...roster.values()].map((u) => ({

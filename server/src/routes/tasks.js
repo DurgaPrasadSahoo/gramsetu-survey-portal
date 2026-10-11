@@ -105,6 +105,14 @@ router.post(
     }
 
     if (ticket.action === TASK_REQUEST_ACTION.DELETE) {
+      const task = (await db.execute({ sql: 'SELECT * FROM survey_tasks WHERE id = @id', args: { id: ticket.task_id } })).rows[0];
+      if (task) {
+        await db.execute({
+          sql: `INSERT INTO trash (record_type, original_id, payload, deleted_by, deleted_by_name)
+                VALUES ('task', @id, @payload, @deletedBy, @deletedByName)`,
+          args: { id: task.id, payload: JSON.stringify(task), deletedBy: req.user.id, deletedByName: req.user.name },
+        });
+      }
       // The task (and the rest of its request history) is gone either way —
       // no need to also update this ticket's own status first.
       await db.execute({ sql: 'DELETE FROM task_requests WHERE task_id = @id', args: { id: ticket.task_id } });

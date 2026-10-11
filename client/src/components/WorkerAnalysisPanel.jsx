@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { ODISHA_DISTRICTS, PANCHAYATS_BY_DISTRICT, getPanchayatsForDistrict } from '../constants/surveyOptions';
 import { ROLE_BADGE_CLASS, roleLabel } from '../constants/roles';
 import { TASK_STATUS_LABELS, taskStatusLabel } from '../constants/taskStatus';
@@ -9,8 +10,12 @@ const ALL_PANCHAYATS = [...new Set(Object.values(PANCHAYATS_BY_DISTRICT).flat())
 const ALL_TASK_STATUSES = Object.keys(TASK_STATUS_LABELS);
 
 export default function WorkerAnalysisPanel() {
-  const [district, setDistrict] = useState('');
-  const [panchayat, setPanchayat] = useState('');
+  const { user } = useAuth();
+  const districtLocked = user.role === 'head_of_district' || user.role === 'head_of_panchayat';
+  const panchayatLocked = user.role === 'head_of_panchayat';
+
+  const [district, setDistrict] = useState(districtLocked ? user.district : '');
+  const [panchayat, setPanchayat] = useState(panchayatLocked ? user.panchayat || '' : '');
   const [village, setVillage] = useState('');
   const [villages, setVillages] = useState([]);
   const [performanceBased, setPerformanceBased] = useState('survey');
@@ -73,28 +78,42 @@ export default function WorkerAnalysisPanel() {
         <div className="filter-bar" style={{ boxShadow: 'none', padding: 0, marginBottom: '1rem' }}>
           <select
             value={district}
+            disabled={districtLocked}
             onChange={(e) => {
               setDistrict(e.target.value);
               setPanchayat('');
               setVillage('');
             }}
           >
-            <option value="">All Districts</option>
-            {ODISHA_DISTRICTS.map((d) => (
-              <option key={d}>{d}</option>
-            ))}
+            {districtLocked ? (
+              <option value={district}>{district}</option>
+            ) : (
+              <>
+                <option value="">All Districts</option>
+                {ODISHA_DISTRICTS.map((d) => (
+                  <option key={d}>{d}</option>
+                ))}
+              </>
+            )}
           </select>
           <select
             value={panchayat}
+            disabled={panchayatLocked}
             onChange={(e) => {
               setPanchayat(e.target.value);
               setVillage('');
             }}
           >
-            <option value="">All Panchayats{district ? ` in ${district}` : ' in Odisha'}</option>
-            {panchayatOptions.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
+            {panchayatLocked ? (
+              <option value={panchayat}>{panchayat || 'No panchayat set on your profile'}</option>
+            ) : (
+              <>
+                <option value="">All Panchayats{district ? ` in ${district}` : ' in Odisha'}</option>
+                {panchayatOptions.map((p) => (
+                  <option key={p}>{p}</option>
+                ))}
+              </>
+            )}
           </select>
           <select value={village} onChange={(e) => setVillage(e.target.value)}>
             <option value="">All Villages</option>

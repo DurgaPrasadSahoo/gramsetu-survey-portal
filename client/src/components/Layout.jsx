@@ -14,7 +14,9 @@ const NAV_ITEMS = [
   { to: '/surveys/new', label: 'New Survey Entry', icon: '📝', roles: ALL_ROLES },
   { to: '/schemes', label: 'Govt Schemes', icon: '📜', roles: ALL_ROLES },
   { to: '/team', label: 'Team Directory', icon: '🧑‍💼', roles: MANAGER_ROLES },
-  { to: '/analysis', label: 'Analysis', icon: '📊', roles: ['developer', 'admin'] },
+  // Field agents have no downline to analyse, so they never get this tab.
+  { to: '/analysis', label: 'Analysis', icon: '📊', roles: MANAGER_ROLES },
+  { to: '/search', label: 'Search', icon: '🔍', roles: ['developer', 'admin'] },
   { to: '/edit-requests', label: 'Edit Requests', icon: '🔓', roles: ['developer'] },
   { to: '/account-requests', label: 'Account Requests', icon: '📨', roles: ['developer'] },
   { to: '/register', label: 'Register New User', icon: '➕', roles: CAN_REGISTER_ROLES },
@@ -22,6 +24,7 @@ const NAV_ITEMS = [
 ];
 
 const BOTTOM_NAV_ITEMS = [
+  { to: '/trash', label: 'Trash', icon: '🗑️', roles: ['developer'] },
   { to: '/software-functionality', label: 'Software Functionality', icon: '⚙️', roles: ['developer'] },
 ];
 

@@ -46,12 +46,14 @@ export default function Login() {
           {loading ? 'Signing in…' : 'Log In'}
         </button>
         <div className="demo-hint">
-          <strong>Demo credentials</strong>
-          <div>Developer: developer@gramsetu.gov.in / Developer@123</div>
-          <div>Admin: admin@gramsetu.gov.in / Admin@123</div>
-          <div>Head of District: district.head@gramsetu.gov.in / District@123</div>
-          <div>Head of Panchayat: panchayat.head@gramsetu.gov.in / Panchayat@123</div>
-          <div>Field Agent: agent@gramsetu.gov.in / Agent@123</div>
+          <strong>Demo accounts</strong>
+          <div>Admin: admin@gramsetu.gov.in</div>
+          <div>Head of District: district.head@gramsetu.gov.in</div>
+          <div>Head of Panchayat: panchayat.head@gramsetu.gov.in</div>
+          <div>Field Agent: agent@gramsetu.gov.in</div>
+          <div className="muted" style={{ marginTop: '0.4rem', fontSize: '0.78rem' }}>
+            Ask your administrator for the password.
+          </div>
         </div>
       </form>
     </AuthShell>

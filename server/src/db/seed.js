@@ -4,27 +4,32 @@ const { buildProfileId, generateUniqueId } = require('../utils/uniqueId');
 
 // Ordered so each entry's parentEmail already exists by the time it is inserted:
 // developer -> admin -> head of district -> head of panchayat -> field agent.
+// Every demo account shares the same password — see connection.js's one-time
+// default-password migration, which resets every existing account to match.
+const DEMO_PASSWORD = '12345';
+
 const DEMO_USERS = [
-  { name: 'Portal Developer', email: 'developer@gramsetu.gov.in', password: 'Developer@123', role: 'developer', parentEmail: null },
-  { name: 'Portal Administrator', email: 'admin@gramsetu.gov.in', password: 'Admin@123', role: 'admin', parentEmail: null },
+  { name: 'Portal Developer', email: 'developer@gramsetu.gov.in', password: DEMO_PASSWORD, role: 'developer', parentEmail: null },
+  { name: 'Portal Administrator', email: 'admin@gramsetu.gov.in', password: DEMO_PASSWORD, role: 'admin', parentEmail: null },
   {
     name: 'Khordha Head of District',
     email: 'district.head@gramsetu.gov.in',
-    password: 'District@123',
+    password: DEMO_PASSWORD,
     role: 'head_of_district',
     parentEmail: 'admin@gramsetu.gov.in',
   },
   {
     name: 'Bhubaneswar Head of Panchayat',
     email: 'panchayat.head@gramsetu.gov.in',
-    password: 'Panchayat@123',
+    password: DEMO_PASSWORD,
     role: 'head_of_panchayat',
+    panchayat: 'Achutyapurpatna',
     parentEmail: 'district.head@gramsetu.gov.in',
   },
   {
     name: 'Field Agent Demo',
     email: 'agent@gramsetu.gov.in',
-    password: 'Agent@123',
+    password: DEMO_PASSWORD,
     role: 'field_agent',
     parentEmail: 'panchayat.head@gramsetu.gov.in',
   },
@@ -53,8 +58,8 @@ async function seed() {
       }
     );
     await db.execute({
-      sql: `INSERT INTO users (name, email, password_hash, role, parent_id, district, unique_id, status)
-            VALUES (@name, @email, @hash, @role, @parentId, @district, @uniqueId, 'active')`,
+      sql: `INSERT INTO users (name, email, password_hash, role, parent_id, district, panchayat, unique_id, status)
+            VALUES (@name, @email, @hash, @role, @parentId, @district, @panchayat, @uniqueId, 'active')`,
       args: {
         name: u.name,
         email: u.email,
@@ -62,6 +67,7 @@ async function seed() {
         role: u.role,
         parentId: parent?.id ?? null,
         district: DEMO_DISTRICT,
+        panchayat: u.panchayat || null,
         uniqueId,
       },
     });
@@ -79,6 +85,11 @@ async function seed() {
       args: { parentId: demoHop.id },
     });
   }
+  await db.execute(
+    `UPDATE users SET panchayat = 'Achutyapurpatna'
+     WHERE email = 'panchayat.head@gramsetu.gov.in' AND (panchayat IS NULL OR panchayat = '')`
+  );
+
   const demoHod = await findByEmail('district.head@gramsetu.gov.in');
   if (demoHod) {
     await db.execute({

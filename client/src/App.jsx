@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -17,11 +17,15 @@ import SoftwareFunctionality from './pages/SoftwareFunctionality';
 import Team from './pages/Team';
 import UserDetail from './pages/UserDetail';
 import Analysis from './pages/Analysis';
+import Search from './pages/Search';
+import Trash from './pages/Trash';
+import Welcome from './pages/Welcome';
 import Profile from './pages/Profile';
 import SchemesInfo from './pages/SchemesInfo';
 import NotFound from './pages/NotFound';
 
 const CAN_REGISTER_ROLES = ['developer', 'admin', 'head_of_district', 'head_of_panchayat'];
+const CAN_ANALYSE_ROLES = ['developer', 'admin', 'head_of_district', 'head_of_panchayat'];
 
 export default function App() {
   return (
@@ -49,8 +53,9 @@ export default function App() {
             <Route path="/team/:id" element={<UserDetail />} />
           </Route>
 
-          {/* Portal-wide reporting — admin and developer only. */}
-          <Route element={<ProtectedRoute roles={['developer', 'admin']} />}>
+          {/* Reporting — everyone but a field agent, each scoped to their own
+              downline; admin/developer alone see the whole portal. */}
+          <Route element={<ProtectedRoute roles={CAN_ANALYSE_ROLES} />}>
             <Route path="/analysis" element={<Analysis />} />
           </Route>
 
@@ -59,17 +64,23 @@ export default function App() {
             <Route path="/register" element={<Register />} />
           </Route>
 
-          {/* Deciding edit/profile/status requests and pausing the portal are
-              all developer-only actions. */}
+          {/* Portal-wide free-text search — admin and developer only. */}
+          <Route element={<ProtectedRoute roles={['developer', 'admin']} />}>
+            <Route path="/search" element={<Search />} />
+          </Route>
+
+          {/* Deciding edit/profile/status requests, pausing the portal, and
+              the Trash are all developer-only actions. */}
           <Route element={<ProtectedRoute roles={['developer']} />}>
             <Route path="/edit-requests" element={<EditRequests />} />
             <Route path="/account-requests" element={<AccountRequests />} />
             <Route path="/software-functionality" element={<SoftwareFunctionality />} />
+            <Route path="/trash" element={<Trash />} />
           </Route>
         </Route>
       </Route>
 
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<Welcome />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

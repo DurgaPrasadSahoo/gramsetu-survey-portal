@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcryptjs');
 const { createClient } = require('@libsql/client');
 require('dotenv').config();
 const { ROLES } = require('../constants/roles');
@@ -115,6 +116,11 @@ async function migrate() {
   }
   if (!userColumns.includes('mobile_number')) {
     await db.execute('ALTER TABLE users ADD COLUMN mobile_number TEXT');
+  }
+  // A Head of Panchayat's own panchayat — locks their Analysis filters to it,
+  // the same way district already locks a Head of District's.
+  if (!userColumns.includes('panchayat')) {
+    await db.execute('ALTER TABLE users ADD COLUMN panchayat TEXT');
   }
 
   // Older installs predate the under_authentication status and the nullable
@@ -317,9 +323,44 @@ async function migrate() {
 
     CREATE INDEX IF NOT EXISTS idx_task_requests_task_id ON task_requests(task_id);
     CREATE INDEX IF NOT EXISTS idx_task_requests_status ON task_requests(status);
+
+    -- A snapshot of a deleted survey/work-task/profile, kept so the developer
+    -- can review and restore it later. The original row is actually gone —
+    -- this is the only remaining copy, as plain JSON (its own shape varies
+    -- by record_type, so there's no fixed column set to give it).
+    CREATE TABLE IF NOT EXISTS trash (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      record_type TEXT NOT NULL CHECK (record_type IN ('survey', 'task', 'profile')),
+      original_id INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      deleted_by INTEGER REFERENCES users(id),
+      deleted_by_name TEXT,
+      deleted_at TEXT NOT NULL DEFAULT (datetime('now')),
+      restored INTEGER NOT NULL DEFAULT 0,
+      restored_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trash_record_type ON trash(record_type, restored);
   `);
 
   await db.execute("INSERT OR IGNORE INTO app_settings (id, maintenance_mode) VALUES (1, 0)");
+
+  // One-time reset of every account's password to the shared demo value —
+  // guarded by this flag so it only ever actually runs once, the first time
+  // this code reaches a given database, and never again overwrites a
+  // password a developer later sets via Reset Password.
+  const settingsColumns = await tableInfo('app_settings');
+  if (!settingsColumns.includes('default_passwords_applied')) {
+    await db.execute('ALTER TABLE app_settings ADD COLUMN default_passwords_applied INTEGER NOT NULL DEFAULT 0');
+  }
+  const alreadyApplied = (
+    await db.execute('SELECT default_passwords_applied FROM app_settings WHERE id = 1')
+  ).rows[0]?.default_passwords_applied;
+  if (!alreadyApplied) {
+    const defaultHash = bcrypt.hashSync('12345', 10);
+    await db.execute({ sql: 'UPDATE users SET password_hash = @hash', args: { hash: defaultHash } });
+    await db.execute('UPDATE app_settings SET default_passwords_applied = 1 WHERE id = 1');
+  }
 
   // Older installs predate the status/Panchayat/unique_id columns.
   const surveyColumns = await tableInfo('surveys');

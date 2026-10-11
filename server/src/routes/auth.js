@@ -31,6 +31,7 @@ function toPublicUser(user) {
     status: user.status,
     parent_id: user.parent_id,
     district: user.district,
+    panchayat: user.panchayat,
     mobile_number: user.mobile_number,
     unique_id: user.unique_id,
   };
@@ -56,7 +57,7 @@ router.post(
   '/register',
   authenticate,
   asyncHandler(async (req, res) => {
-    const { name, email, password, confirmPassword, role, parentId, district, mobileNumber } = req.body;
+    const { name, email, password, confirmPassword, role, parentId, district, panchayat, mobileNumber } = req.body;
     const isDeveloper = req.user.role === 'developer';
 
     const creatableRoles = CREATABLE_ROLES_BY_ROLE[req.user.role] || [];
@@ -75,6 +76,11 @@ router.post(
     }
     if (!ODISHA_DISTRICTS.includes(district)) {
       return res.status(400).json({ message: 'Invalid district selected.' });
+    }
+    // A Head of Panchayat's own panchayat locks their Analysis filters to it —
+    // every other role's analysis filters only ever lock down to district.
+    if (role === 'head_of_panchayat' && !panchayat) {
+      return res.status(400).json({ message: 'Panchayat is required for a Head of Panchayat.' });
     }
     if (isDeveloper) {
       if (!password) return res.status(400).json({ message: 'Password is required.' });
@@ -114,6 +120,19 @@ router.post(
       return res.status(409).json({ message: 'An account with this email already exists.' });
     }
 
+    // Two profiles can share a mobile number (different area, different
+    // supervisor) — but not when every other identifying detail also matches,
+    // which would just be the same profile entered twice.
+    const duplicate = await db.execute({
+      sql: `SELECT 1 FROM users WHERE LOWER(name) = LOWER(@name) AND mobile_number = @mobileNumber
+            AND role = @role AND district = @district
+            AND ${resolvedParentId === null ? 'parent_id IS NULL' : 'parent_id = @parentId'}`,
+      args: { name: name.trim(), mobileNumber, role, district, ...(resolvedParentId === null ? {} : { parentId: resolvedParentId }) },
+    });
+    if (duplicate.rows[0]) {
+      return res.status(409).json({ message: 'An identical profile already exists — same name, mobile number, role, district and supervisor.' });
+    }
+
     const uniqueId = await generateUniqueId(
       () => buildProfileId(role, district),
       async (candidate) => {
@@ -126,8 +145,8 @@ router.post(
     const status = isDeveloper ? USER_STATUS.ACTIVE : USER_STATUS.UNDER_AUTHENTICATION;
 
     const info = await db.execute({
-      sql: `INSERT INTO users (name, email, password_hash, role, parent_id, district, mobile_number, unique_id, status)
-            VALUES (@name, @email, @hash, @role, @parentId, @district, @mobileNumber, @uniqueId, @status)`,
+      sql: `INSERT INTO users (name, email, password_hash, role, parent_id, district, panchayat, mobile_number, unique_id, status)
+            VALUES (@name, @email, @hash, @role, @parentId, @district, @panchayat, @mobileNumber, @uniqueId, @status)`,
       args: {
         name: name.trim(),
         email: email.toLowerCase().trim(),
@@ -135,6 +154,7 @@ router.post(
         role,
         parentId: resolvedParentId,
         district,
+        panchayat: role === 'head_of_panchayat' ? panchayat : null,
         mobileNumber,
         uniqueId,
         status,

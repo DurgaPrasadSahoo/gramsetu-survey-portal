@@ -1,10 +1,11 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const { db } = require('../db/connection');
 const { authenticate, requireRole } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { getVisibleUserIds, getAncestorChain, getDescendantIds } = require('../utils/hierarchy');
 const { MANAGER_ROLES, REQUIRED_PARENT_ROLES, OPTIONAL_PARENT_ROLES } = require('../constants/roles');
-const { STATUS_REQUEST_STATUS } = require('../constants/userStatus');
+const { USER_STATUS, STATUS_REQUEST_STATUS } = require('../constants/userStatus');
 
 const router = express.Router();
 router.use(authenticate);
@@ -54,7 +55,7 @@ router.get(
 
     const users = (
       await db.execute({
-        sql: `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district,
+        sql: `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.panchayat,
                      u.mobile_number, u.unique_id, p.name AS parent_name,
                      COUNT(s.id) AS surveyCount, ${PENDING_STATUS_SUBQUERY}
               FROM users u
@@ -131,7 +132,7 @@ router.get(
 
     const target = (
       await db.execute({
-        sql: `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district,
+        sql: `SELECT u.id, u.name, u.email, u.role, u.status, u.created_at, u.parent_id, u.district, u.panchayat,
                      u.mobile_number, u.unique_id, p.name AS parent_name,
                      COUNT(s.id) AS surveyCount, ${PENDING_STATUS_SUBQUERY}
               FROM users u
@@ -209,6 +210,14 @@ router.patch(
       return res.status(403).json({ message: 'You do not have permission to manage this user.' });
     }
 
+    // A still-pending registration has no developer-reviewed password yet —
+    // only the profile_requests approve/decline flow may bring it to active,
+    // never a manager's activate/deactivate ticket (and the developer
+    // bypass below would otherwise flip it active with no password at all).
+    if (target.status === USER_STATUS.UNDER_AUTHENTICATION) {
+      return res.status(400).json({ message: 'This profile is still awaiting developer approval and cannot be activated or deactivated yet.' });
+    }
+
     if (req.user.role === 'developer') {
       await db.execute({ sql: 'UPDATE users SET status = @status WHERE id = @id', args: { status, id: target.id } });
       return res.json({ message: 'User status updated.' });
@@ -231,6 +240,142 @@ router.patch(
       args: { userId: target.id, requestedBy: req.user.id, action, status: STATUS_REQUEST_STATUS.PENDING },
     });
     res.status(201).json({ message: 'Request submitted for developer approval. The account keeps working as normal until then.' });
+  })
+);
+
+// Roles whose survey-location data locks their own district/panchayat once
+// they've actually surveyed somewhere — editing past that would orphan the
+// meaning of their existing records' location fields.
+const AREA_LOCKED_ROLES = ['head_of_district', 'head_of_panchayat', 'field_agent'];
+
+// Developer-only: edit a profile's basic info. Blocked (with reasons) when the
+// change would conflict with the profile's own existing survey records.
+router.patch(
+  '/:id',
+  requireRole('developer'),
+  asyncHandler(async (req, res) => {
+    const target = (await db.execute({ sql: 'SELECT * FROM users WHERE id = @id', args: { id: req.params.id } })).rows[0];
+    if (!target || target.role === 'developer') return res.status(404).json({ message: 'User not found.' });
+
+    const { name, mobileNumber, district, panchayat } = req.body;
+    if (!name || !mobileNumber || !district) {
+      return res.status(400).json({ message: 'Name, mobile number and district are required.' });
+    }
+    if (!/^\d{10}$/.test(mobileNumber)) {
+      return res.status(400).json({ message: 'Mobile number must be 10 digits.' });
+    }
+
+    const conflicts = [];
+
+    if (mobileNumber !== target.mobile_number) {
+      const mobileTaken = (
+        await db.execute({ sql: 'SELECT 1 FROM users WHERE mobile_number = @mobileNumber AND id != @id', args: { mobileNumber, id: target.id } })
+      ).rows[0];
+      if (mobileTaken) conflicts.push(`Mobile number ${mobileNumber} is already assigned to another profile.`);
+    }
+
+    if (AREA_LOCKED_ROLES.includes(target.role)) {
+      const surveys = (
+        await db.execute({ sql: 'SELECT DISTINCT district, panchayat FROM surveys WHERE created_by = @id', args: { id: target.id } })
+      ).rows;
+      if (surveys.length > 0) {
+        if (district !== target.district) {
+          const existingDistricts = [...new Set(surveys.map((s) => s.district))];
+          if (!existingDistricts.every((d) => d === district)) {
+            conflicts.push(`Cannot change district — this profile already has survey(s) recorded under: ${existingDistricts.join(', ')}.`);
+          }
+        }
+        if (target.role !== 'head_of_district' && panchayat !== undefined && panchayat !== target.panchayat) {
+          const existingPanchayats = [...new Set(surveys.map((s) => s.panchayat).filter(Boolean))];
+          if (existingPanchayats.length && !existingPanchayats.every((p) => p === panchayat)) {
+            conflicts.push(`Cannot change panchayat — this profile already has survey(s) recorded under: ${existingPanchayats.join(', ')}.`);
+          }
+        }
+      }
+    }
+
+    if (conflicts.length) {
+      return res.status(409).json({ message: 'This change conflicts with existing records.', conflicts });
+    }
+
+    await db.execute({
+      sql: 'UPDATE users SET name = @name, mobile_number = @mobileNumber, district = @district, panchayat = @panchayat WHERE id = @id',
+      args: {
+        name: name.trim(),
+        mobileNumber,
+        district,
+        panchayat: panchayat !== undefined ? panchayat || null : target.panchayat,
+        id: target.id,
+      },
+    });
+
+    res.json({ message: 'Profile updated.' });
+  })
+);
+
+// Developer-only: set a new password for any profile directly — no ticket,
+// matching the developer's unconditional rights over every account.
+router.post(
+  '/:id/reset-password',
+  requireRole('developer'),
+  asyncHandler(async (req, res) => {
+    const { password } = req.body;
+    if (!password || password.length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+    }
+    const target = (await db.execute({ sql: 'SELECT id FROM users WHERE id = @id', args: { id: req.params.id } })).rows[0];
+    if (!target) return res.status(404).json({ message: 'User not found.' });
+
+    const hash = bcrypt.hashSync(password, 10);
+    await db.execute({ sql: 'UPDATE users SET password_hash = @hash WHERE id = @id', args: { hash, id: target.id } });
+    res.json({ message: 'Password reset.' });
+  })
+);
+
+// Developer-only: permanently remove a profile (moved to Trash first, so it
+// can be restored later). Blocked while the profile still has survey/task
+// history or team members reporting to it — that data would be orphaned.
+router.delete(
+  '/:id',
+  requireRole('developer'),
+  asyncHandler(async (req, res) => {
+    const target = (await db.execute({ sql: 'SELECT * FROM users WHERE id = @id', args: { id: req.params.id } })).rows[0];
+    if (!target || target.role === 'developer') return res.status(404).json({ message: 'User not found.' });
+    if (target.id === req.user.id) return res.status(400).json({ message: 'You cannot delete your own account.' });
+
+    const blockers = [];
+    const surveyCount = (
+      await db.execute({ sql: 'SELECT COUNT(*) AS c FROM surveys WHERE created_by = @id', args: { id: target.id } })
+    ).rows[0].c;
+    if (surveyCount > 0) blockers.push(`${surveyCount} survey(s) they submitted`);
+    const taskCount = (
+      await db.execute({ sql: 'SELECT COUNT(*) AS c FROM survey_tasks WHERE initiated_by = @id', args: { id: target.id } })
+    ).rows[0].c;
+    if (taskCount > 0) blockers.push(`${taskCount} work task(s) they initiated`);
+    const reportCount = (
+      await db.execute({ sql: 'SELECT COUNT(*) AS c FROM users WHERE parent_id = @id', args: { id: target.id } })
+    ).rows[0].c;
+    if (reportCount > 0) blockers.push(`${reportCount} team member(s) reporting to them`);
+
+    if (blockers.length) {
+      return res.status(409).json({ message: `Cannot delete — this profile still has ${blockers.join(', ')}. Reassign or remove that first.` });
+    }
+
+    await db.execute({
+      sql: `INSERT INTO trash (record_type, original_id, payload, deleted_by, deleted_by_name)
+            VALUES ('profile', @id, @payload, @deletedBy, @deletedByName)`,
+      args: { id: target.id, payload: JSON.stringify(target), deletedBy: req.user.id, deletedByName: req.user.name },
+    });
+    // Tickets this profile ever raised (on its own account, or on someone
+    // else's task/survey) reference it too — gone either way, the profile
+    // itself is the thing being removed.
+    await db.execute({ sql: 'DELETE FROM profile_requests WHERE user_id = @id OR requested_by = @id', args: { id: target.id } });
+    await db.execute({ sql: 'DELETE FROM status_requests WHERE user_id = @id OR requested_by = @id', args: { id: target.id } });
+    await db.execute({ sql: 'DELETE FROM task_requests WHERE requested_by = @id', args: { id: target.id } });
+    await db.execute({ sql: 'DELETE FROM edit_requests WHERE requested_by = @id', args: { id: target.id } });
+    await db.execute({ sql: 'DELETE FROM users WHERE id = @id', args: { id: target.id } });
+
+    res.json({ message: 'Profile deleted.' });
   })
 );
 

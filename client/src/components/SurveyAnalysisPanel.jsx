@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
+import { useAuth } from '../context/AuthContext';
 import { ODISHA_DISTRICTS, PANCHAYATS_BY_DISTRICT, getPanchayatsForDistrict, CENTRAL_SCHEMES, ODISHA_SCHEMES } from '../constants/surveyOptions';
+import { exportSurveyAnalysis } from '../utils/exportAnalysis';
 
 const PAGE_SIZE = 10;
 
@@ -10,8 +12,16 @@ const PAGE_SIZE = 10;
 const ALL_PANCHAYATS = [...new Set(Object.values(PANCHAYATS_BY_DISTRICT).flat())].sort();
 
 export default function SurveyAnalysisPanel() {
-  const [district, setDistrict] = useState('');
-  const [panchayat, setPanchayat] = useState('');
+  const { user } = useAuth();
+  // A Head of District/Panchayat's own area is forced server-side regardless
+  // of what's sent — these just keep the UI honest about that by disabling
+  // the filter and pre-filling it, rather than offering a choice that's
+  // silently overridden.
+  const districtLocked = user.role === 'head_of_district' || user.role === 'head_of_panchayat';
+  const panchayatLocked = user.role === 'head_of_panchayat';
+
+  const [district, setDistrict] = useState(districtLocked ? user.district : '');
+  const [panchayat, setPanchayat] = useState(panchayatLocked ? user.panchayat || '' : '');
   const [village, setVillage] = useState('');
   const [villages, setVillages] = useState([]);
   const [selectedSchemes, setSelectedSchemes] = useState([]);
@@ -24,6 +34,8 @@ export default function SurveyAnalysisPanel() {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [exportFormat, setExportFormat] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   const panchayatOptions = district ? getPanchayatsForDistrict(district) : ALL_PANCHAYATS;
 
@@ -79,6 +91,30 @@ export default function SurveyAnalysisPanel() {
     loadResults(appliedFilters, next);
   };
 
+  const handleExport = async (format) => {
+    setExportFormat(null);
+    setExporting(true);
+    try {
+      // The export covers every matched record, not just the page on screen.
+      const { data } = await api.get('/analysis/surveys', {
+        params: {
+          district: appliedFilters.district,
+          panchayat: appliedFilters.panchayat,
+          village: appliedFilters.village,
+          schemes: appliedFilters.selectedSchemes.join(','),
+          availability: appliedFilters.availability,
+          page: 1,
+          pageSize: 10000,
+        },
+      });
+      exportSurveyAnalysis({ rows: data.data, filters: appliedFilters, format });
+    } catch {
+      setError('Unable to export this list.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const renderSchemeGroup = (title, schemes) => (
     <div>
       <h4 className="scheme-group-title">{title}</h4>
@@ -99,28 +135,42 @@ export default function SurveyAnalysisPanel() {
         <div className="filter-bar" style={{ boxShadow: 'none', padding: 0, marginBottom: '1rem' }}>
           <select
             value={district}
+            disabled={districtLocked}
             onChange={(e) => {
               setDistrict(e.target.value);
               setPanchayat('');
               setVillage('');
             }}
           >
-            <option value="">All Districts</option>
-            {ODISHA_DISTRICTS.map((d) => (
-              <option key={d}>{d}</option>
-            ))}
+            {districtLocked ? (
+              <option value={district}>{district}</option>
+            ) : (
+              <>
+                <option value="">All Districts</option>
+                {ODISHA_DISTRICTS.map((d) => (
+                  <option key={d}>{d}</option>
+                ))}
+              </>
+            )}
           </select>
           <select
             value={panchayat}
+            disabled={panchayatLocked}
             onChange={(e) => {
               setPanchayat(e.target.value);
               setVillage('');
             }}
           >
-            <option value="">All Panchayats{district ? ` in ${district}` : ' in Odisha'}</option>
-            {panchayatOptions.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
+            {panchayatLocked ? (
+              <option value={panchayat}>{panchayat || 'No panchayat set on your profile'}</option>
+            ) : (
+              <>
+                <option value="">All Panchayats{district ? ` in ${district}` : ' in Odisha'}</option>
+                {panchayatOptions.map((p) => (
+                  <option key={p}>{p}</option>
+                ))}
+              </>
+            )}
           </select>
           <select value={village} onChange={(e) => setVillage(e.target.value)}>
             <option value="">All Villages</option>
@@ -162,7 +212,12 @@ export default function SurveyAnalysisPanel() {
           <div className="empty-state">No surveys match this filter.</div>
         ) : (
           <>
-            <p className="page-subtitle">{total} household{total === 1 ? '' : 's'} matched.</p>
+            <div className="page-header" style={{ marginBottom: '0.6rem' }}>
+              <p className="page-subtitle" style={{ margin: 0 }}>{total} household{total === 1 ? '' : 's'} matched.</p>
+              <button className="btn btn-outline" disabled={exporting} onClick={() => setExportFormat(true)}>
+                {exporting ? 'Exporting…' : '⬇ Export'}
+              </button>
+            </div>
             <div className="record-table record-table--survey-analysis">
               <div className="record-table-head">
                 <span>SL No.</span>
@@ -190,6 +245,22 @@ export default function SurveyAnalysisPanel() {
             <Pagination page={page} totalPages={totalPages} onChange={handlePageChange} />
           </>
         ))}
+
+      {exportFormat && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal">
+            <h3>Export Survey Analysis</h3>
+            <div className="modal-message">
+              <p>Choose a file format to export this list ({total} record{total === 1 ? '' : 's'}):</p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-outline" onClick={() => setExportFormat(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={() => handleExport('excel')}>Excel</button>
+              <button className="btn btn-primary" onClick={() => handleExport('pdf')}>PDF</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
